@@ -1,0 +1,22 @@
+# Training image: runs the DVC-orchestrated pipeline end to end and
+# produces models/model.joblib + artifacts/*.joblib as build output.
+# Typically run as a Kubernetes Job / Argo Workflow step, or in CI.
+FROM python:3.12-slim AS base
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY params.yaml dvc.yaml ./
+COPY src/ ./src/
+
+# Data is pulled via `dvc pull` at container start (mount a volume with the
+# DVC local remote, or point DVC at S3/GCS remote in cloud deployments).
+COPY .dvc/ ./.dvc/
+
+ENTRYPOINT ["dvc", "repro"]

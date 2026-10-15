@@ -1,0 +1,22 @@
+# Overrides applied on top of values.yaml for the staging environment.
+# CI updates `image.tag` / `modelVersion` here on every successful build —
+# that commit is what ArgoCD's auto-sync picks up.
+replicaCount: 1
+
+image:
+  tag: latest
+
+autoscaling:
+  minReplicas: 1
+  maxReplicas: 3
+
+ingress:
+  host: staging.ev-battery.example.com
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi

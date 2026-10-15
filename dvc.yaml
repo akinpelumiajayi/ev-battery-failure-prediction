@@ -1,0 +1,82 @@
+stages:
+  validate:
+    cmd: python src/data/validate.py
+    deps:
+      - src/data/validate.py
+      - data/raw/ev_battery_data.csv
+    outs:
+      - artifacts/validation_report.txt
+
+  preprocess:
+    cmd: python src/data/preprocess.py
+    deps:
+      - src/data/preprocess.py
+      - data/raw/ev_battery_data.csv
+      - artifacts/validation_report.txt
+    params:
+      - split
+      - target_column
+    outs:
+      - data/processed/train.parquet
+      - data/processed/val.parquet
+      - data/processed/test.parquet
+      - data/reference/reference.parquet
+
+  featurize:
+    cmd: python src/features/build_features.py
+    deps:
+      - src/features/build_features.py
+      - data/processed/train.parquet
+      - data/processed/val.parquet
+      - data/processed/test.parquet
+    params:
+      - preprocess
+      - target_column
+    outs:
+      - artifacts/preprocessor.joblib
+      - artifacts/feature_metadata.joblib
+      - data/processed/train_features.parquet
+      - data/processed/val_features.parquet
+      - data/processed/test_features.parquet
+
+  train:
+    cmd: python src/training/train.py
+    deps:
+      - src/training/train.py
+      - data/processed/train_features.parquet
+      - data/processed/val_features.parquet
+    params:
+      - train
+      - mlflow
+      - target_column
+      - evaluation.decision_threshold
+    outs:
+      - models/model.joblib
+    metrics:
+      - models/train_metrics.json:
+          cache: false
+
+  evaluate:
+    cmd: python src/evaluation/evaluate.py
+    deps:
+      - src/evaluation/evaluate.py
+      - models/model.joblib
+      - data/processed/test_features.parquet
+    params:
+      - evaluation
+      - target_column
+    metrics:
+      - models/test_metrics.json:
+          cache: false
+
+  drift_check:
+    cmd: python src/monitoring/drift_check.py --current data/processed/test.parquet
+    deps:
+      - src/monitoring/drift_check.py
+      - data/reference/reference.parquet
+      - data/processed/test.parquet
+    params:
+      - monitoring.drift_psi_threshold
+    metrics:
+      - artifacts/drift_report.json:
+          cache: false

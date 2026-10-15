@@ -1,0 +1,52 @@
+name: Scheduled Drift Check
+
+# Simulates what would run as a Kubernetes CronJob in production: pull the
+# latest reference + a recent data batch, compute PSI drift, and open an
+# issue (or trigger retraining) if it crosses the threshold. This is the
+# piece that "closes the loop" from the architecture in the README.
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # daily at 06:00 UTC
+  workflow_dispatch: {}    # allow manual trigger from the Actions tab
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Pull data from DVC remote
+        run: dvc pull
+
+      - name: Run drift check against latest test batch
+        id: drift
+        run: |
+          python src/monitoring/drift_check.py --current data/processed/test.parquet
+          N_DRIFTED=$(python -c "import json; print(json.load(open('artifacts/drift_report.json'))['n_features_drifted'])")
+          echo "n_drifted=$N_DRIFTED" >> "$GITHUB_OUTPUT"
+
+      - name: Open an issue if drift detected
+        if: steps.drift.outputs.n_drifted != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('artifacts/drift_report.json', 'utf8'));
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Data drift detected: ${report.n_features_drifted} features over PSI threshold`,
+              body: "```json\n" + JSON.stringify(report.drifted_features, null, 2) + "\n```\n\nConsider triggering the retraining pipeline.",
+              labels: ["drift", "mlops"],
+            });
+
+      # In a real deployment, a drift signal here would dispatch the
+      # retraining workflow (repository_dispatch or workflow_dispatch on
+      # ci.yml) instead of / in addition to filing an issue.

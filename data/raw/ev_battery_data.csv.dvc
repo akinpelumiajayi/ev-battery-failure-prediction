@@ -1,0 +1,5 @@
+outs:
+- md5: 5b638704c2f05b2f89baff75b069ffea
+  size: 7639719
+  hash: md5
+  path: ev_battery_data.csv

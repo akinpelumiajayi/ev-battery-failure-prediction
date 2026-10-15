@@ -1,0 +1,39 @@
+target_column: battery_failure
+id_column: vehicle_id
+
+split:
+  test_size: 0.15
+  val_size: 0.15
+  random_state: 42
+
+preprocess:
+  numeric_impute_strategy: median
+  categorical_impute_strategy: most_frequent
+  drop_columns:
+    - battery_serial   # high-cardinality identifier, not predictive
+    - vehicle_id
+
+train:
+  model_type: random_forest       # random_forest | gradient_boosting | logistic_regression
+  random_state: 42
+  n_estimators: 400
+  max_depth: 12
+  min_samples_leaf: 3
+  class_weight: balanced
+
+evaluation:
+  decision_threshold: 0.5
+  metrics:
+    - roc_auc
+    - pr_auc
+    - f1
+    - precision
+    - recall
+
+mlflow:
+  tracking_uri: "sqlite:///mlflow/mlflow.db"   # local backend store; artifacts land in ./mlflow/mlruns
+  experiment_name: "ev-battery-failure-prediction"
+  registered_model_name: "ev-battery-failure-model"
+
+monitoring:
+  drift_psi_threshold: 0.2

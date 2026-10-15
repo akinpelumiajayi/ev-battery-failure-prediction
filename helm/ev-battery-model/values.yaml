@@ -1,0 +1,42 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/your-org/ev-battery-api
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 65
+  targetMemoryUtilizationPercentage: 75
+
+ingress:
+  enabled: true
+  className: nginx
+  host: ev-battery.example.com
+
+probes:
+  path: /health
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+modelVersion: "latest"
+
+canary:
+  enabled: false
+  weight: 20   # % of traffic to the new version when Argo Rollouts canary is enabled

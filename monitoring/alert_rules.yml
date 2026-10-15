@@ -1,0 +1,29 @@
+groups:
+  - name: ev-battery-model-alerts
+    rules:
+      - alert: HighFailureRiskRate
+        expr: rate(predictions_total{risk_band="high"}[15m]) / rate(predictions_total[15m]) > 0.3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unusually high proportion of high-risk predictions"
+          description: "More than 30% of predictions in the last 15m were flagged 'high' risk — check for upstream data issues or a genuine fleet-health event."
+
+      - alert: PredictionLatencyHigh
+        expr: histogram_quantile(0.95, rate(prediction_latency_seconds_bucket[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95 prediction latency above 500ms"
+          description: "Serving latency degraded — check pod resource limits / HPA scaling."
+
+      - alert: APIDown
+        expr: up{job="ev-battery-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "EV battery prediction API is down"
+          description: "Prometheus cannot scrape the API — check pod status and readiness probes."

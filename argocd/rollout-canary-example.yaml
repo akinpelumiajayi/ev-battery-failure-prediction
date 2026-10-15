@@ -1,0 +1,58 @@
+# OPTIONAL: Argo Rollouts canary strategy — a drop-in replacement for
+# k8s/base/deployment.yaml's Deployment kind. Requires the Argo Rollouts
+# controller installed in-cluster (`kubectl argo rollouts` plugin).
+#
+# Progressively shifts traffic to the new model version and auto-rolls-back
+# if error rate or latency (queried from Prometheus) regresses — this is
+# the "canary deployment" differentiator over a plain rolling update.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: ev-battery-api
+  namespace: mlops-prod
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ev-battery-api
+  template:
+    metadata:
+      labels:
+        app: ev-battery-api
+    spec:
+      containers:
+        - name: ev-battery-api
+          image: ghcr.io/your-org/ev-battery-api:latest
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 5
+  strategy:
+    canary:
+      steps:
+        - setWeight: 10
+        - pause: { duration: 5m }
+        - analysis:
+            templates:
+              - templateName: success-rate-check
+        - setWeight: 50
+        - pause: { duration: 10m }
+        - setWeight: 100
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate-check
+  namespace: mlops-prod
+spec:
+  metrics:
+    - name: prediction-latency-p95
+      interval: 1m
+      successCondition: result < 0.5
+      failureLimit: 3
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring.svc.cluster.local:9090
+          query: |
+            histogram_quantile(0.95, rate(prediction_latency_seconds_bucket{app="ev-battery-api"}[5m]))

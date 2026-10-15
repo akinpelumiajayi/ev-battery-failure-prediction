@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ev-battery-api
+  namespace: mlops
+  labels:
+    app: ev-battery-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ev-battery-api
+  template:
+    metadata:
+      labels:
+        app: ev-battery-api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8000"
+    spec:
+      containers:
+        - name: ev-battery-api
+          image: ghcr.io/your-org/ev-battery-api:latest   # replaced by CI with the built tag
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          env:
+            - name: MODEL_VERSION
+              valueFrom:
+                configMapKeyRef:
+                  name: ev-battery-config
+                  key: model_version
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ev-battery-config
+  namespace: mlops
+data:
+  model_version: "latest"

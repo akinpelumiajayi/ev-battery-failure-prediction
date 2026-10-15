@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Lint (ruff)
+        run: |
+          pip install ruff
+          ruff check src/ --output-format=github || true   # non-blocking style pass
+
+      - name: Pull data + artifacts from DVC remote
+        run: dvc pull || echo "No remote cache yet on first run — pipeline will regenerate"
+
+      - name: Run data validation stage
+        run: python src/data/validate.py
+
+      - name: Reproduce full DVC pipeline (preprocess -> train -> evaluate -> drift)
+        run: dvc repro
+
+      - name: Show pipeline metrics
+        run: dvc metrics show
+
+      - name: Run unit + API tests
+        run: pytest tests/ -v
+
+      - name: Enforce model quality gate
+        run: |
+          python -c "
+          import json
+          m = json.load(open('models/test_metrics.json'))
+          print('Test metrics:', m)
+          assert m['test_roc_auc'] >= 0.75, 'Quality gate failed: ROC-AUC below threshold'
+          "
+
+      - name: Push updated artifacts to DVC remote
+        if: github.ref == 'refs/heads/main'
+        run: dvc push
+
+      - name: Upload metrics as build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-metrics
+          path: |
+            models/test_metrics.json
+            models/train_metrics.json
+            artifacts/drift_report.json
+
+  build-image:
+    needs: test-and-validate
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push serving image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.serve
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/${{ github.repository }}:latest

@@ -1,0 +1,48 @@
+name: CD - Promote to Staging
+
+# Triggered when CI finishes on main. This job does NOT talk to Kubernetes
+# directly — it only edits helm/ev-battery-model/values-staging.yaml and
+# pushes the commit. ArgoCD (already watching this repo, see
+# argocd/application-staging.yaml) picks up the diff and performs the
+# actual deployment. That indirection *is* GitOps: the cluster state is a
+# pure function of what's committed to Git, and Git is the audit log.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  bump-staging-image:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set new image tag in staging values
+        run: |
+          SHA_TAG="${{ github.event.workflow_run.head_sha }}"
+          sed -i "s/^  tag: .*/  tag: \"${SHA_TAG}\"/" helm/ev-battery-model/values-staging.yaml
+          sed -i "s/^modelVersion: .*/modelVersion: \"${SHA_TAG:0:8}\"/" helm/ev-battery-model/values.yaml
+          cat helm/ev-battery-model/values-staging.yaml
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add helm/ev-battery-model/values-staging.yaml helm/ev-battery-model/values.yaml
+          git commit -m "ci: promote image ${{ github.event.workflow_run.head_sha }} to staging" || echo "No changes to commit"
+          git push
+
+      # Optional: notify ArgoCD immediately instead of waiting for its
+      # polling interval (requires ARGOCD_SERVER / ARGOCD_AUTH_TOKEN secrets).
+      - name: Trigger ArgoCD sync (optional)
+        if: ${{ secrets.ARGOCD_AUTH_TOKEN != '' }}
+        run: |
+          curl -sk -X POST "https://${{ secrets.ARGOCD_SERVER }}/api/v1/applications/ev-battery-model-staging/sync" \
+            -H "Authorization: Bearer ${{ secrets.ARGOCD_AUTH_TOKEN }}"

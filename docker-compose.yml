@@ -1,0 +1,57 @@
+# Local dev stack. Brings up everything needed to develop against without
+# touching Kubernetes: MLflow tracking server, the serving API, and the
+# Prometheus/Grafana monitoring pair. Mirrors what's deployed to the
+# cluster in k8s/ and helm/, just without the orchestration layer.
+#
+# Usage:
+#   docker compose up --build
+#   API:        http://localhost:8000/docs
+#   MLflow UI:  http://localhost:5000
+#   Prometheus: http://localhost:9090
+#   Grafana:    http://localhost:3000  (admin/admin)
+
+services:
+  mlflow:
+    image: python:3.12-slim
+    working_dir: /mlflow
+    volumes:
+      - ./mlflow:/mlflow
+    ports:
+      - "5000:5000"
+    command: >
+      bash -c "pip install --no-cache-dir mlflow==2.17.2 sqlalchemy==2.0.35 &&
+               mlflow server --host 0.0.0.0 --port 5000
+               --backend-store-uri sqlite:///mlflow.db
+               --default-artifact-root /mlflow/mlruns"
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.serve
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mlflow
+    environment:
+      - MODEL_VERSION=local-dev
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+    volumes:
+      - ./monitoring/grafana-dashboard.json:/var/lib/grafana/dashboards/ev-battery.json
+    depends_on:
+      - prometheus

@@ -1,0 +1,36 @@
+# Serving image: lightweight FastAPI inference server.
+# Model artifacts are baked in at build time (copied from the training
+# stage's output) so the pod has zero external dependencies at startup —
+# this makes k8s rollouts/canaries deterministic and fast.
+FROM python:3.12-slim AS base
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir \
+    fastapi==0.115.4 "uvicorn[standard]==0.32.0" pydantic==2.9.2 \
+    prometheus-client==0.21.0 scikit-learn==1.5.2 pandas==2.2.3 \
+    numpy==1.26.4 joblib==1.4.2 pyarrow==17.0.0
+
+COPY src/serving/ ./src/serving/
+COPY src/__init__.py ./src/__init__.py
+RUN touch ./src/serving/__init__.py
+
+# Model artifacts produced by the training pipeline — copy them in at
+# image-build time so this image is a fully self-contained deployable unit.
+COPY models/model.joblib ./models/model.joblib
+COPY artifacts/preprocessor.joblib ./artifacts/preprocessor.joblib
+COPY artifacts/feature_metadata.joblib ./artifacts/feature_metadata.joblib
+
+RUN useradd --create-home appuser && chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+CMD ["uvicorn", "src.serving.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

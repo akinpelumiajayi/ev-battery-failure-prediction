@@ -1,0 +1,28 @@
+# DVC-tracked data/models (pulled via `dvc pull`, not committed to git)
+/data/raw/ev_battery_data.csv
+/data/processed
+/data/reference
+/models/*.joblib
+/artifacts/*.joblib
+
+# DVC local remote storage (this IS the "storage" — keep it out of git,
+# it's restorable via `dvc pull` from whoever has this folder / a real remote)
+/dvcstore
+
+# MLflow local backend
+/mlflow/mlflow.db
+/mlflow/mlruns
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+/mlruns

@@ -1,0 +1,33 @@
+{
+  "title": "EV Battery Failure Model — Serving Dashboard",
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "graph",
+      "title": "Predictions per minute by risk band",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "sum(rate(predictions_total[1m])) by (risk_band)", "legendFormat": "{{risk_band}}" }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "P50 / P95 prediction latency (s)",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, rate(prediction_latency_seconds_bucket[5m]))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, rate(prediction_latency_seconds_bucket[5m]))", "legendFormat": "p95" }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "Distribution of predicted failure probability",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 8 },
+      "targets": [
+        { "expr": "sum(rate(predicted_failure_probability_bucket[15m])) by (le)", "legendFormat": "{{le}}" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1
+}

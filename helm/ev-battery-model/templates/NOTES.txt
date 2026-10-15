@@ -1,0 +1,12 @@
+EV Battery Failure Prediction API deployed as "{{ .Release.Name }}".
+
+Check status:
+  kubectl get pods -n {{ .Release.Namespace }} -l app={{ .Release.Name }}-ev-battery-api
+
+Port-forward for local testing:
+  kubectl port-forward svc/{{ .Release.Name }}-ev-battery-api -n {{ .Release.Namespace }} 8000:{{ .Values.service.port }}
+  curl localhost:8000/health
+
+{{- if .Values.ingress.enabled }}
+Exposed externally at: http://{{ .Values.ingress.host }}
+{{- end }}

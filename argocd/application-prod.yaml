@@ -1,0 +1,37 @@
+# Production Application. Deliberately NOT auto-synced — a human clicks
+# "Sync" in the ArgoCD UI (or runs `argocd app sync ev-battery-model-prod`)
+# after verifying the staging rollout and canary metrics look healthy.
+# This is the standard staging-auto / prod-manual pattern.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ev-battery-model-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/your-org/ev-battery-mlops.git
+    targetRevision: main
+    path: helm/ev-battery-model
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-prod.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mlops-prod
+
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
+  # No `automated:` block -> manual sync required for production promotion.

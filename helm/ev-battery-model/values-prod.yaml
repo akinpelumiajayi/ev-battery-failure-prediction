@@ -1,0 +1,23 @@
+# Overrides applied on top of values.yaml for production.
+# image.tag is pinned explicitly by a human during the manual ArgoCD sync
+# (never `latest` in prod) after staging validation passes.
+replicaCount: 3
+
+image:
+  tag: "v1.0.0"   # pin to an immutable, tested tag — set by the release process
+
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 12
+  targetCPUUtilizationPercentage: 60
+
+ingress:
+  host: ev-battery.example.com
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 1Gi

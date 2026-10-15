@@ -1,0 +1,45 @@
+# ArgoCD Application — this is the GitOps control loop.
+#
+# ArgoCD continuously watches `helm/ev-battery-model` on the `main` branch
+# of this repo and reconciles the live cluster state to match it. When CI
+# (.github/workflows/cd.yml) bumps `image.tag` and/or `modelVersion` in
+# values-staging.yaml and pushes that commit, ArgoCD detects the diff and
+# syncs automatically — no human runs `kubectl apply` or `helm upgrade`.
+#
+# Apply once to bootstrap:
+#   kubectl apply -f argocd/application-staging.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ev-battery-model-staging
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/your-org/ev-battery-mlops.git
+    targetRevision: main
+    path: helm/ev-battery-model
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-staging.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mlops-staging
+
+  syncPolicy:
+    automated:
+      prune: true       # remove resources deleted from Git
+      selfHeal: true     # revert any manual kubectl edits back to Git state
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
