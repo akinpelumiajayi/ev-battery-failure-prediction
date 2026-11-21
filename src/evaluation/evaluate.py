@@ -21,6 +21,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import mlflow
 import numpy as np
 import pandas as pd
 from mlflow.tracking import MlflowClient
@@ -31,7 +32,6 @@ from sklearn.metrics import (
     RocCurveDisplay,
 )
 
-import mlflow
 from src.common import (
     ARTIFACTS_DIR,
     FIGURES_DIR,

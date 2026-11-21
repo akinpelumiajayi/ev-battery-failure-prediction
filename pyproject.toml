@@ -29,6 +29,7 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["src"]
+known-third-party = ["mlflow"]  # a local ./mlflow/ tracking dir would otherwise look first-party
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

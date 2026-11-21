@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import joblib
+import mlflow
 import mlflow.sklearn
 import numpy as np
 import optuna
@@ -33,7 +34,6 @@ from mlflow.tracking import MlflowClient
 from sklearn.metrics import average_precision_score
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 
-import mlflow
 from src.common import MODELS_DIR, PROCESSED_DIR, PROJECT_ROOT, get_logger, load_params, write_json
 from src.training.metrics import classification_metrics, optimal_threshold
 from src.training.models import build_model
