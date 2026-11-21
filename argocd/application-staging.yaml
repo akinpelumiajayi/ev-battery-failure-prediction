@@ -19,7 +19,7 @@ spec:
   project: default
 
   source:
-    repoURL: https://github.com/your-org/ev-battery-mlops.git
+    repoURL: https://github.com/akinpelumiajayi/ev-battery-failure-prediction.git
     targetRevision: main
     path: helm/ev-battery-model
     helm:
