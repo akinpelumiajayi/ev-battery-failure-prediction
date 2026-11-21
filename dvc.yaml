@@ -1,19 +1,28 @@
+# Reproducible pipeline DAG — `dvc repro` re-runs only stages whose code,
+# data or params changed. `dvc dag` renders the graph.
+#
+# Small, human-readable outputs (metrics, metadata, figures) use
+# `cache: false` so they are committed to Git and reviewable in PRs; large
+# binaries (data, models, preprocessors) live in the DVC cache.
+
 stages:
   validate:
-    cmd: python src/data/validate.py
+    cmd: python -m src.data.validate
     deps:
       - src/data/validate.py
       - data/raw/ev_battery_data.csv
     outs:
-      - artifacts/validation_report.txt
+      - artifacts/validation_report.txt:
+          cache: false
 
   preprocess:
-    cmd: python src/data/preprocess.py
+    cmd: python -m src.data.preprocess
     deps:
       - src/data/preprocess.py
       - data/raw/ev_battery_data.csv
       - artifacts/validation_report.txt
     params:
+      - data.raw_path
       - split
       - target_column
     outs:
@@ -22,15 +31,28 @@ stages:
       - data/processed/test.parquet
       - data/reference/reference.parquet
 
+  leakage_audit:
+    cmd: python -m src.evaluation.leakage_audit
+    deps:
+      - src/evaluation/leakage_audit.py
+      - data/processed/train.parquet
+      - data/processed/val.parquet
+    params:
+      - features.drop_columns
+      - train.random_state
+    metrics:
+      - reports/leakage_audit.json:
+          cache: false
+
   featurize:
-    cmd: python src/features/build_features.py
+    cmd: python -m src.features.build_features
     deps:
       - src/features/build_features.py
       - data/processed/train.parquet
       - data/processed/val.parquet
       - data/processed/test.parquet
     params:
-      - preprocess
+      - features
       - target_column
     outs:
       - artifacts/preprocessor.joblib
@@ -40,27 +62,36 @@ stages:
       - data/processed/test_features.parquet
 
   train:
-    cmd: python src/training/train.py
+    cmd: python -m src.training.train
     deps:
-      - src/training/train.py
+      - src/training/
       - data/processed/train_features.parquet
       - data/processed/val_features.parquet
     params:
       - train
       - mlflow
       - target_column
-      - evaluation.decision_threshold
+      - evaluation.cost_false_negative
+      - evaluation.cost_false_positive
+      - evaluation.risk_band_medium_ratio
     outs:
       - models/model.joblib
+      - models/model_metadata.json:
+          cache: false
     metrics:
       - models/train_metrics.json:
           cache: false
+      - models/model_comparison.json:
+          cache: false
 
   evaluate:
-    cmd: python src/evaluation/evaluate.py
+    cmd: python -m src.evaluation.evaluate
     deps:
       - src/evaluation/evaluate.py
+      - src/training/metrics.py
       - models/model.joblib
+      - models/model_metadata.json
+      - artifacts/feature_metadata.joblib
       - data/processed/test_features.parquet
     params:
       - evaluation
@@ -68,15 +99,29 @@ stages:
     metrics:
       - models/test_metrics.json:
           cache: false
+    outs:
+      - reports/feature_importance.json:
+          cache: false
+    plots:
+      - reports/figures/roc_pr_curves.png:
+          cache: false
+      - reports/figures/calibration.png:
+          cache: false
+      - reports/figures/cost_curve.png:
+          cache: false
+      - reports/figures/confusion_matrix.png:
+          cache: false
+      - reports/figures/shap_importance.png:
+          cache: false
 
   drift_check:
-    cmd: python src/monitoring/drift_check.py --current data/processed/test.parquet
+    cmd: python -m src.monitoring.drift_check --current data/processed/test.parquet
     deps:
       - src/monitoring/drift_check.py
       - data/reference/reference.parquet
       - data/processed/test.parquet
     params:
-      - monitoring.drift_psi_threshold
+      - monitoring
     metrics:
       - artifacts/drift_report.json:
           cache: false

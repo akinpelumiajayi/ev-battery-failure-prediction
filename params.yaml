@@ -1,39 +1,90 @@
+# Single source of truth for every tunable in the pipeline. DVC tracks each
+# section as a stage dependency, so changing a value here re-runs exactly the
+# stages that depend on it (`dvc repro`) — and nothing is hard-coded in src/.
+
 target_column: battery_failure
 id_column: vehicle_id
+
+data:
+  raw_path: data/raw/ev_battery_data.csv
+  # Public mirror used by CI / fresh clones. The md5 is verified against the
+  # DVC pointer file, so a tampered or stale download fails loudly.
+  remote_url: https://github.com/akinpelumiajayi/ev-battery-failure-prediction/releases/download/data-v1/ev_battery_data.csv.gz
 
 split:
   test_size: 0.15
   val_size: 0.15
   random_state: 42
 
-preprocess:
+features:
   numeric_impute_strategy: median
   categorical_impute_strategy: most_frequent
   drop_columns:
-    - battery_serial   # high-cardinality identifier, not predictive
+    - battery_serial   # unique per row — an identifier, not a signal
     - vehicle_id
 
 train:
-  model_type: random_forest       # random_forest | gradient_boosting | logistic_regression
   random_state: 42
-  n_estimators: 400
-  max_depth: 12
-  min_samples_leaf: 3
-  class_weight: balanced
+  # Candidates are compared by stratified k-fold CV PR-AUC on the train fold
+  # (PR-AUC is the right metric for a ~7% positive class; CV is far less
+  # noisy than one validation fold with ~200 positives). Each candidate is a
+  # nested MLflow run, so the comparison is browsable in the UI.
+  selection_metric: cv_pr_auc
+  cv_folds: 5
+  candidates:
+    logistic_regression:
+      C: 0.5
+      class_weight: balanced
+      max_iter: 2000
+    random_forest:
+      n_estimators: 400
+      max_depth: 12
+      min_samples_leaf: 3
+      class_weight: balanced
+    lightgbm:
+      n_estimators: 500
+      learning_rate: 0.03
+      num_leaves: 31
+      min_child_samples: 20
+      subsample: 0.8
+      subsample_freq: 1
+      colsample_bytree: 0.8
+    xgboost:
+      n_estimators: 500
+      learning_rate: 0.03
+      max_depth: 6
+      subsample: 0.8
+      colsample_bytree: 0.8
+  # Bayesian hyper-parameter search (Optuna TPE) on top of the best family.
+  tuning:
+    enabled: true
+    model: lightgbm
+    n_trials: 25
 
 evaluation:
-  decision_threshold: 0.5
-  metrics:
-    - roc_auc
-    - pr_auc
-    - f1
-    - precision
-    - recall
+  # Decision threshold is NOT fixed at 0.5: it is chosen on the validation
+  # fold to minimise expected business cost. Missing a failing battery
+  # (roadside breakdown, warranty pack replacement, safety risk) is far more
+  # expensive than an unnecessary diagnostic inspection.
+  cost_false_negative: 10.0
+  cost_false_positive: 1.0
+  # Risk bands are expressed relative to the tuned decision threshold, so
+  # "high" always means "we would flag this vehicle", whatever the threshold.
+  risk_band_medium_ratio: 0.5   # medium band starts at 0.5 x threshold
+  # Hard quality gates — evaluate.py exits non-zero if either is breached,
+  # which blocks the Docker build and the deployment in CI.
+  min_roc_auc: 0.90
+  min_pr_auc: 0.55
+  # Champion/challenger gate: a PR may not regress test PR-AUC by more than
+  # this vs. the model currently on main.
+  max_pr_auc_regression: 0.02
 
 mlflow:
-  tracking_uri: "sqlite:///mlflow/mlflow.db"   # local backend store; artifacts land in ./mlflow/mlruns
+  tracking_uri: "sqlite:///mlflow/mlflow.db"   # swap for http://mlflow.internal:5000 in a team setup
   experiment_name: "ev-battery-failure-prediction"
   registered_model_name: "ev-battery-failure-model"
 
 monitoring:
-  drift_psi_threshold: 0.2
+  drift_psi_threshold: 0.2        # per-feature PSI: >0.2 = significant shift
+  drift_share_threshold: 0.10     # retrain if >10% of features drift...
+  drift_critical_psi: 1.0         # ...or any single feature shifts this violently

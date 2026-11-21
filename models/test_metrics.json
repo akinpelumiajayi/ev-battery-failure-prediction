@@ -1,17 +1,18 @@
 {
-  "test_roc_auc": 0.9559817197487328,
-  "test_pr_auc": 0.6101652801001765,
-  "test_f1": 0.5944700460829493,
-  "test_precision": 0.5707964601769911,
-  "test_recall": 0.6201923076923077,
-  "confusion_matrix": [
-    [
-      2695,
-      97
-    ],
-    [
-      79,
-      129
-    ]
-  ]
+  "model": "logistic_regression",
+  "test_roc_auc": 0.9845437513775622,
+  "test_pr_auc": 0.7846478826928832,
+  "test_brier": 0.042552429828132926,
+  "test_f1": 0.7135135135135136,
+  "test_precision": 0.5706051873198847,
+  "test_recall": 0.9519230769230769,
+  "test_tn": 2643,
+  "test_fp": 149,
+  "test_fn": 10,
+  "test_tp": 198,
+  "test_threshold": 0.555,
+  "test_cost_per_vehicle": 0.083,
+  "test_cost_per_vehicle_at_0_5": 0.086,
+  "test_cost_inspect_none": 0.6933333333333334,
+  "test_cost_saving_vs_0_5_pct": 3.48837209302324
 }

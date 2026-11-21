@@ -1,0 +1,21 @@
+{
+  "model_name": "logistic_regression",
+  "model_class": "LogisticRegression",
+  "hyperparameters": {
+    "C": 0.5,
+    "class_weight": "balanced",
+    "max_iter": 2000
+  },
+  "decision_threshold": 0.555,
+  "risk_band_medium_ratio": 0.5,
+  "cost_false_negative": 10.0,
+  "cost_false_positive": 1.0,
+  "mlflow_run_id": "b3cab240693f4c398e74e9ac55496aef",
+  "registry_version": "3",
+  "git_sha": "8c0edf56c055c35ebfb8da41ccf4d260e446abe1",
+  "trained_at": "2026-11-21T23:33:30+00:00",
+  "python": "3.12.16",
+  "n_train": 14000,
+  "n_features": 158,
+  "val_positive_rate": 0.06933333333333333
+}
