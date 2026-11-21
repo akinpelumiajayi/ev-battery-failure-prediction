@@ -1,0 +1,10 @@
+# Streamlit demo UI — stateless; talks to the API via $API_URL.
+FROM python:3.12-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 API_URL=http://api:8000
+WORKDIR /app
+COPY requirements/demo.txt .
+RUN pip install --no-cache-dir -r demo.txt && useradd --uid 10001 --create-home appuser
+COPY demo/ demo/
+USER 10001
+EXPOSE 8501
+CMD ["sh", "-c", "streamlit run demo/streamlit_app.py --server.address=0.0.0.0 --server.port=${PORT:-8501} --server.headless=true --browser.gatherUsageStats=false"]

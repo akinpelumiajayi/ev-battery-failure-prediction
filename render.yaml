@@ -1,0 +1,28 @@
+# Render Blueprint — free-tier live demo (API + Streamlit UI).
+#
+# Prerequisites:
+#   1. CI has pushed ghcr.io/akinpelumiajayi/ev-battery-failure-prediction:latest
+#   2. The GHCR package is public (GitHub → Packages → package settings → visibility)
+# Then: Render dashboard → New → Blueprint → select this repo. After the API is
+# up, set the demo's API_URL to the API's public URL (https://<name>.onrender.com).
+services:
+  - type: web
+    name: ev-battery-api
+    runtime: image
+    image:
+      url: ghcr.io/akinpelumiajayi/ev-battery-failure-prediction:latest
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8000"
+
+  - type: web
+    name: ev-battery-demo
+    runtime: docker
+    dockerfilePath: ./docker/Dockerfile.demo
+    dockerContext: .
+    plan: free
+    envVars:
+      - key: API_URL
+        sync: false
