@@ -26,3 +26,14 @@ venv/
 .vscode/
 .idea/
 /mlruns
+
+# Simulated drift batches (regenerable: python -m src.monitoring.simulate_drift)
+/data/drift
+
+# Tooling caches
+.coverage
+coverage.xml
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+.env

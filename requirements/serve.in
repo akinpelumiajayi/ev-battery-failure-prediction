@@ -1,0 +1,12 @@
+# Minimal runtime for the inference API (kept small for the container image)
+pandas
+numpy
+scikit-learn
+joblib
+pyyaml
+lightgbm
+xgboost-cpu
+fastapi
+uvicorn[standard]
+pydantic>=2
+prometheus-client
