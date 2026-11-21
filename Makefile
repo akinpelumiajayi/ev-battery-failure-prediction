@@ -1,60 +1,117 @@
-.PHONY: setup validate pipeline test serve docker-build docker-up docker-down \
-        dvc-push dvc-pull drift-check clean lint
+# Run `make help` for a list of targets.
+PY ?= python
+IMAGE ?= ev-battery-api:local
+.DEFAULT_GOAL := help
 
-setup:
-	pip install -r requirements.txt
+.PHONY: help
+help:  ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-validate:
-	python src/data/validate.py
+# ---- setup ---------------------------------------------------------------------
+.PHONY: setup lock
+setup:  ## Install dev dependencies + pre-commit hooks
+	$(PY) -m pip install -r requirements/dev.txt
+	pre-commit install
 
-pipeline:
+lock:  ## Re-compile pinned requirements/*.txt from *.in (needs uv)
+	cd requirements && for f in serve train dev demo; do \
+		uv pip compile $$f.in --python-version 3.12 --python-platform x86_64-manylinux_2_28 -q -o $$f.txt; done
+
+# ---- ML pipeline ---------------------------------------------------------------
+.PHONY: data pipeline metrics dag
+data:  ## Download + md5-verify the raw dataset
+	$(PY) -m src.data.fetch_data
+
+pipeline: data  ## Run the full DVC pipeline (validate -> ... -> evaluate -> drift)
 	dvc repro
 
-test:
-	pytest tests/ -v
+metrics:  ## Show tracked metrics (and diff vs. main)
+	dvc metrics show
+	dvc metrics diff main --md || true
 
-lint:
-	ruff check src/ tests/
+dag:  ## Print the pipeline DAG
+	dvc dag
 
-serve:
+# ---- quality -------------------------------------------------------------------
+.PHONY: lint format typecheck test check
+lint:  ## Ruff lint + format check
+	ruff check src tests demo scripts
+	ruff format --check src tests demo scripts
+
+format:  ## Auto-format
+	ruff format src tests demo scripts
+	ruff check --fix src tests demo scripts
+
+typecheck:  ## mypy
+	mypy
+
+test:  ## Unit + API tests with coverage
+	pytest --cov --cov-report=term
+
+check: lint typecheck test  ## Everything CI checks before training
+
+# ---- drift demo ----------------------------------------------------------------
+.PHONY: drift-check drift-demo
+drift-check:  ## PSI drift check of the held-out test batch (expect: no drift)
+	$(PY) -m src.monitoring.drift_check --current data/processed/test.parquet
+
+drift-demo:  ## Simulate a heatwave batch and watch the drift alarm fire
+	$(PY) -m src.monitoring.simulate_drift --scenario heatwave
+	$(PY) -m src.monitoring.drift_check --current data/drift/heatwave.parquet --report artifacts/drift_report_heatwave.json
+
+# ---- serving -------------------------------------------------------------------
+.PHONY: serve demo mlflow-ui load-test
+serve:  ## Run the API locally with hot reload
 	uvicorn src.serving.app:app --host 0.0.0.0 --port 8000 --reload
 
-mlflow-ui:
+demo:  ## Run the Streamlit UI against the local API
+	API_URL=http://localhost:8000 streamlit run demo/streamlit_app.py
+
+mlflow-ui:  ## Browse experiments + model registry
 	mlflow ui --backend-store-uri sqlite:///mlflow/mlflow.db --port 5000
 
-drift-check:
-	python src/monitoring/drift_check.py --current data/processed/test.parquet
+load-test:  ## Send synthetic traffic to the API for 60s
+	$(PY) scripts/load_test.py --url http://localhost:8000 --rps 10 --duration 60
 
-dvc-push:
-	dvc push
-
-dvc-pull:
-	dvc pull
-
-docker-build:
-	docker build -f docker/Dockerfile.serve -t ev-battery-api:local .
+# ---- containers ----------------------------------------------------------------
+.PHONY: docker-build docker-up docker-down
+docker-build:  ## Build serving + training images
+	docker build -f docker/Dockerfile.serve -t $(IMAGE) .
 	docker build -f docker/Dockerfile.train -t ev-battery-train:local .
 
-docker-up:
-	docker compose up --build
+docker-up:  ## Local stack: API, demo UI, MLflow, Prometheus, Grafana
+	docker compose up --build -d
+	@echo "Demo http://localhost:8501 | API http://localhost:8000/docs | Grafana http://localhost:3000"
 
-docker-down:
+docker-down:  ## Stop the local stack
 	docker compose down -v
 
-# Kubernetes / Helm (requires a cluster context set, e.g. via `kind` or minikube)
-helm-lint:
-	helm lint helm/ev-battery-model
+# ---- Kubernetes ----------------------------------------------------------------
+.PHONY: kind-up kind-deploy kind-down helm-lint argocd-bootstrap
+helm-lint:  ## Lint the Helm chart for every environment
+	helm lint helm/ev-battery-model -f helm/ev-battery-model/values-staging.yaml
+	helm lint helm/ev-battery-model -f helm/ev-battery-model/values-prod.yaml
 
-helm-install-staging:
-	helm upgrade --install ev-battery-staging helm/ev-battery-model \
-		-f helm/ev-battery-model/values.yaml \
+kind-up:  ## Create a local kind cluster
+	kind create cluster --name ev-battery
+
+kind-deploy: docker-build  ## Build, load into kind and install the chart (staging values)
+	kind load docker-image $(IMAGE) --name ev-battery
+	helm upgrade --install ev-battery helm/ev-battery-model \
 		-f helm/ev-battery-model/values-staging.yaml \
-		-n mlops-staging --create-namespace
+		--set image.repository=ev-battery-api --set image.tag=local --set image.pullPolicy=Never \
+		-n mlops-staging --create-namespace --wait --timeout 3m
+	@echo "kubectl port-forward svc/ev-battery-ev-battery-api -n mlops-staging 8000:80"
 
-argocd-bootstrap:
+kind-down:  ## Delete the kind cluster
+	kind delete cluster --name ev-battery
+
+argocd-bootstrap:  ## Register the staging + prod ArgoCD Applications
 	kubectl apply -f argocd/application-staging.yaml
 	kubectl apply -f argocd/application-prod.yaml
 
-clean:
-	rm -rf data/processed/* models/*.joblib models/*.json artifacts/*.joblib \
-	       artifacts/*.json artifacts/*.txt mlflow/mlflow.db mlflow/mlruns __pycache__ .pytest_cache
+# ---- housekeeping --------------------------------------------------------------
+.PHONY: clean
+clean:  ## Remove generated data, models and caches (keeps raw data)
+	rm -rf data/processed data/reference data/drift models/*.joblib artifacts/*.joblib \
+	       mlflow/mlflow.db mlruns .pytest_cache .ruff_cache .mypy_cache .coverage htmlcov
