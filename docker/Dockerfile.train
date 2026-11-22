@@ -1,22 +1,28 @@
-# Training image: runs the DVC-orchestrated pipeline end to end and
-# produces models/model.joblib + artifacts/*.joblib as build output.
-# Typically run as a Kubernetes Job / Argo Workflow step, or in CI.
-FROM python:3.12-slim AS base
+# syntax=docker/dockerfile:1.7
+# ---------------------------------------------------------------------------
+# Training image: runs the full DVC pipeline (fetch -> validate -> ... ->
+# evaluate). Suitable as a Kubernetes Job / Argo Workflows step for
+# scheduled or drift-triggered retraining.
+#
+#   docker build -f docker/Dockerfile.train -t ev-battery-train .
+#   docker run --rm -v "$PWD/models:/app/models" -v "$PWD/reports:/app/reports" ev-battery-train
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim
 
-WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 git \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+WORKDIR /app
+COPY requirements/train.txt requirements/train.txt
+RUN pip install --no-cache-dir -r requirements/train.txt
 
-COPY params.yaml dvc.yaml ./
-COPY src/ ./src/
+COPY params.yaml dvc.yaml dvc.lock ./
+COPY .dvc/config .dvc/config
+COPY data/raw/ev_battery_data.csv.dvc data/raw/ev_battery_data.csv.dvc
+COPY src/ src/
 
-# Data is pulled via `dvc pull` at container start (mount a volume with the
-# DVC local remote, or point DVC at S3/GCS remote in cloud deployments).
-COPY .dvc/ ./.dvc/
+# No .git inside the image: let DVC run without SCM integration.
+RUN dvc config core.no_scm true && mkdir -p mlflow
 
-ENTRYPOINT ["dvc", "repro"]
+CMD ["sh", "-c", "python -m src.data.fetch_data && dvc repro"]

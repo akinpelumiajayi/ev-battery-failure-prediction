@@ -2,9 +2,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ .Release.Name }}-ev-battery-api
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
+  name: {{ include "ev-battery.fullname" . }}
+  labels:
+    {{- include "ev-battery.labels" . | nindent 4 }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:
@@ -15,7 +15,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ .Release.Name }}-ev-battery-api
+                name: {{ include "ev-battery.fullname" . }}
                 port:
-                  number: {{ .Values.service.port }}
+                  name: http
 {{- end }}

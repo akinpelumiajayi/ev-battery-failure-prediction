@@ -1,9 +1,12 @@
-replicaCount: 2
+# Base values shared by every environment. values-staging.yaml and
+# values-prod.yaml override only what differs.
 
 image:
-  repository: ghcr.io/your-org/ev-battery-api
-  tag: latest
+  repository: ghcr.io/akinpelumiajayi/ev-battery-failure-prediction
+  tag: latest            # always overridden per environment with an immutable git-SHA tag
   pullPolicy: IfNotPresent
+
+replicaCount: 2
 
 service:
   type: ClusterIP
@@ -13,30 +16,47 @@ service:
 resources:
   requests:
     cpu: 250m
-    memory: 256Mi
+    memory: 384Mi
   limits:
     cpu: "1"
-    memory: 512Mi
+    memory: 768Mi
 
 autoscaling:
   enabled: true
   minReplicas: 2
   maxReplicas: 8
   targetCPUUtilizationPercentage: 65
-  targetMemoryUtilizationPercentage: 75
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
 
 ingress:
-  enabled: true
+  enabled: false
   className: nginx
-  host: ev-battery.example.com
+  host: ev-battery.local
 
 probes:
   path: /health
   initialDelaySeconds: 5
   periodSeconds: 10
 
-modelVersion: "latest"
-
-canary:
+# Prometheus Operator integration (kube-prometheus-stack). Off by default so
+# the chart installs on a bare cluster (e.g. kind in CI) without the CRDs.
+serviceMonitor:
   enabled: false
-  weight: 20   # % of traffic to the new version when Argo Rollouts canary is enabled
+  interval: 15s
+  labels:
+    release: kube-prometheus-stack
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]

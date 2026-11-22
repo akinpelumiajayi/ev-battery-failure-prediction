@@ -1,0 +1,11 @@
+-r train.in
+pytest
+pytest-cov
+httpx
+ruff
+mypy
+pandas-stubs
+types-PyYAML
+pre-commit
+ipykernel
+nbconvert

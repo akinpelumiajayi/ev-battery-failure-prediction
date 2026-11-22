@@ -1,95 +1,229 @@
 name: CI
 
+# quality ──▶ train (DVC repro + quality & champion/challenger gates)
+#                 └──▶ image (build ─▶ container smoke test ─▶ kind + Helm smoke test ─▶ push to GHCR on main)
+#
+# Also runnable on demand (Actions tab, or dispatched by drift-check.yml when
+# the monitoring loop detects data drift) to retrain the model.
+
 on:
-  pull_request:
-    branches: [main]
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Why is this run being triggered? (e.g. "drift detected")
+        required: false
+        default: manual retrain
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
 
 jobs:
-  test-and-validate:
+  quality:
+    name: Lint · types · unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
-
-      - name: Cache pip packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements/dev.txt
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements/dev.txt
 
-      - name: Lint (ruff)
+      - name: Ruff (lint + format)
         run: |
-          pip install ruff
-          ruff check src/ --output-format=github || true   # non-blocking style pass
+          ruff check src tests demo scripts --output-format=github
+          ruff format --check src tests demo scripts
 
-      - name: Pull data + artifacts from DVC remote
-        run: dvc pull || echo "No remote cache yet on first run — pipeline will regenerate"
+      - name: Mypy
+        run: mypy
 
-      - name: Run data validation stage
-        run: python src/data/validate.py
-
-      - name: Reproduce full DVC pipeline (preprocess -> train -> evaluate -> drift)
-        run: dvc repro
-
-      - name: Show pipeline metrics
-        run: dvc metrics show
-
-      - name: Run unit + API tests
-        run: pytest tests/ -v
-
-      - name: Enforce model quality gate
+      - name: Pytest + coverage
         run: |
-          python -c "
-          import json
-          m = json.load(open('models/test_metrics.json'))
-          print('Test metrics:', m)
-          assert m['test_roc_auc'] >= 0.75, 'Quality gate failed: ROC-AUC below threshold'
-          "
+          pytest --cov --cov-report=term --cov-report=xml
+          echo "### Test coverage" >> "$GITHUB_STEP_SUMMARY"
+          python -c "import xml.etree.ElementTree as E; r=E.parse('coverage.xml').getroot(); print(f\"**{float(r.get('line-rate'))*100:.1f}%** line coverage\")" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Push updated artifacts to DVC remote
-        if: github.ref == 'refs/heads/main'
-        run: dvc push
+      - name: Helm lint
+        run: |
+          helm lint helm/ev-battery-model -f helm/ev-battery-model/values-staging.yaml
+          helm lint helm/ev-battery-model -f helm/ev-battery-model/values-prod.yaml
 
-      - name: Upload metrics as build artifact
-        uses: actions/upload-artifact@v4
+  train:
+    name: Train · evaluate · gate
+    needs: quality
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write   # post the model report on the PR
+    steps:
+      - uses: actions/checkout@v5
         with:
-          name: model-metrics
-          path: |
-            models/test_metrics.json
-            models/train_metrics.json
-            artifacts/drift_report.json
+          fetch-depth: 0     # need history to fetch the champion's metrics
 
-  build-image:
-    needs: test-and-validate
-    if: github.ref == 'refs/heads/main'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements/train.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements/train.txt
+
+      - name: Fetch dataset (md5-verified against the DVC pointer)
+        run: python -m src.data.fetch_data
+
+      - name: Reproduce pipeline (validate → split → audit → featurize → train → evaluate → drift)
+        run: |
+          mkdir -p mlflow
+          dvc repro --force
+        # evaluate.py exits non-zero if ROC-AUC / PR-AUC fall below the
+        # quality gates in params.yaml — that fails the build right here.
+
+      - name: Champion / challenger gate
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="$(git rev-parse HEAD^ 2>/dev/null || true)"
+          fi
+          git show "$BASE:models/test_metrics.json" > champion.json 2>/dev/null || : > champion.json
+          python -m src.evaluation.promotion_gate --baseline champion.json --summary model_report.md
+          cat model_report.md >> "$GITHUB_STEP_SUMMARY"
+          { echo; echo "#### Model comparison (CV PR-AUC)"; echo '```json'; cat models/model_comparison.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify the monitoring loop (simulated heatwave must raise a drift alarm)
+        run: |
+          python -m src.monitoring.simulate_drift --scenario heatwave
+          set +e
+          python -m src.monitoring.drift_check --current data/drift/heatwave.parquet \
+            --report artifacts/drift_report_heatwave.json --fail-on-drift
+          code=$?
+          set -e
+          test "$code" -eq 2 || { echo "::error::drift alarm did not fire on a drifted batch"; exit 1; }
+
+      - name: Comment model report on PR
+        if: github.event_name == 'pull_request'
+        continue-on-error: true   # fork PRs get a read-only token
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- model-report -->';
+            const body = marker + '\n' + fs.readFileSync('model_report.md', 'utf8') +
+              '\n<sub>Figures: see the `model-bundle` artifact of this run.</sub>';
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const existing = comments.find(c => c.body && c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Upload model bundle
+        uses: actions/upload-artifact@v5
+        with:
+          name: model-bundle
+          retention-days: 30
+          path: |
+            models/model.joblib
+            models/*.json
+            artifacts/preprocessor.joblib
+            artifacts/feature_metadata.joblib
+            artifacts/*.json
+            reports/
+
+  image:
+    name: Image · container + Kubernetes smoke tests · push
+    needs: train
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Log in to GitHub Container Registry
+      - name: Download the model trained in this run
+        uses: actions/download-artifact@v5
+        with:
+          name: model-bundle
+          path: .
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build serving image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.serve
+          load: true
+          build-args: GIT_SHA=${{ github.sha }}
+          tags: |
+            ev-battery-api:ci
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Container smoke test
+        run: |
+          docker run -d --name api -p 8000:8000 ev-battery-api:ci
+          for i in $(seq 1 30); do curl -sf localhost:8000/health && break; sleep 1; done
+          curl -sf localhost:8000/health | tee /dev/stderr | grep -q '"model_loaded":true'
+          curl -sf -X POST localhost:8000/predict -H 'Content-Type: application/json' \
+            -d '{"state_of_health": 62, "internal_resistance": 0.9, "BMS_warning_count": 5}' | tee /dev/stderr \
+            | grep -q failure_probability
+          curl -sf -X POST localhost:8000/explain -H 'Content-Type: application/json' \
+            -d '{"state_of_health": 62}' | grep -q top_factors
+          docker logs api
+          docker rm -f api
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: ci
+
+      - name: Helm install on kind + in-cluster smoke test
+        run: |
+          kind load docker-image ev-battery-api:ci --name ci
+          helm install ev-battery helm/ev-battery-model \
+            -f helm/ev-battery-model/values-staging.yaml \
+            --set image.repository=ev-battery-api --set image.tag=ci --set image.pullPolicy=Never \
+            -n mlops-staging --create-namespace --wait --timeout 3m
+          kubectl get all -n mlops-staging
+          kubectl port-forward svc/ev-battery-ev-battery-api -n mlops-staging 8080:80 &
+          for i in $(seq 1 20); do curl -sf localhost:8080/health && break; sleep 1; done
+          curl -sf localhost:8080/model | tee /dev/stderr | grep -q decision_threshold
+          curl -sf -X POST localhost:8080/predict -H 'Content-Type: application/json' -d '{}' | grep -q risk_band
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push serving image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile.serve
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
-            ghcr.io/${{ github.repository }}:latest
+      - name: Push image (main only)
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          docker push "${IMAGE_NAME}:${GITHUB_SHA}"
+          docker push "${IMAGE_NAME}:latest"
+          echo "Pushed \`${IMAGE_NAME}:${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,32 @@
+{
+  "max_single_feature_auc": 0.8480010963098327,
+  "n_suspicious_features": 0,
+  "suspicious_features": {},
+  "top_single_feature_auc": {
+    "thermal_runaway_risk": 0.848,
+    "thermal_health_score": 0.8429,
+    "battery_health_percent": 0.812,
+    "capacity_loss_percent": 0.8119,
+    "state_of_health": 0.8103,
+    "predicted_remaining_life_cycles": 0.8098,
+    "cell_temperature_max": 0.8033,
+    "internal_resistance": 0.793,
+    "cell_temperature_avg": 0.7827,
+    "battery_stress_index": 0.7633
+  },
+  "ablation_full_roc_auc": 0.985588976746749,
+  "ablation_full_pr_auc": 0.8374490970754931,
+  "ablation_no_derived_roc_auc": 0.9824274713467049,
+  "ablation_no_derived_pr_auc": 0.7990800809375206,
+  "ablation_pr_auc_drop": 0.0383690161379725,
+  "derived_features_removed": [
+    "thermal_runaway_risk",
+    "thermal_health_score",
+    "predicted_remaining_life_cycles",
+    "battery_stress_index",
+    "aging_score",
+    "charging_quality_score",
+    "driving_stress_score",
+    "maintenance_score"
+  ]
+}

@@ -1,7 +1,7 @@
 schema: '2.0'
 stages:
   validate:
-    cmd: python src/data/validate.py
+    cmd: python -m src.data.validate
     deps:
     - path: data/raw/ev_battery_data.csv
       hash: md5
@@ -9,30 +9,31 @@ stages:
       size: 7639719
     - path: src/data/validate.py
       hash: md5
-      md5: 36734e2902e4610b45b9db1f84052258
-      size: 3326
+      md5: 2272a1a5a111e3a6b857e10408fd8b69
+      size: 4049
     outs:
     - path: artifacts/validation_report.txt
       hash: md5
-      md5: 68632d30f4967daa641f601e13dbcbd9
-      size: 74
+      md5: 81f3dfbac67651128bce5d0580ac3a6f
+      size: 88
   preprocess:
-    cmd: python src/data/preprocess.py
+    cmd: python -m src.data.preprocess
     deps:
     - path: artifacts/validation_report.txt
       hash: md5
-      md5: 68632d30f4967daa641f601e13dbcbd9
-      size: 74
+      md5: 81f3dfbac67651128bce5d0580ac3a6f
+      size: 88
     - path: data/raw/ev_battery_data.csv
       hash: md5
       md5: 5b638704c2f05b2f89baff75b069ffea
       size: 7639719
     - path: src/data/preprocess.py
       hash: md5
-      md5: afacdd55155b1f3c31b4299a0a817965
-      size: 2348
+      md5: 7f5bf9466eec164640d971f3339c85bf
+      size: 2023
     params:
       params.yaml:
+        data.raw_path: data/raw/ev_battery_data.csv
         split:
           test_size: 0.15
           val_size: 0.15
@@ -41,42 +42,42 @@ stages:
     outs:
     - path: data/processed/test.parquet
       hash: md5
-      md5: bb8b0baffc67346bbe908a9205b6828d
-      size: 743663
+      md5: 4de96566855c19a397c8ea508267da0b
+      size: 743595
     - path: data/processed/train.parquet
       hash: md5
-      md5: 708c8680054b8e15ab3613a2afc6cce5
-      size: 2570243
+      md5: c7eb24be29ade0fa312c9b2cff70b05d
+      size: 2573884
     - path: data/processed/val.parquet
       hash: md5
-      md5: 09a40aee3e9a398ad1a35bb5be2b13b6
-      size: 744107
+      md5: b178e1d292dd1de40857fdf1898a7357
+      size: 744075
     - path: data/reference/reference.parquet
       hash: md5
-      md5: 08d1c859fed0260b057444a0f22c7ad7
-      size: 2567806
+      md5: 5dc201945252f937242860dcbbd99089
+      size: 2571455
   featurize:
-    cmd: python src/features/build_features.py
+    cmd: python -m src.features.build_features
     deps:
     - path: data/processed/test.parquet
       hash: md5
-      md5: bb8b0baffc67346bbe908a9205b6828d
-      size: 743663
+      md5: 4de96566855c19a397c8ea508267da0b
+      size: 743595
     - path: data/processed/train.parquet
       hash: md5
-      md5: 708c8680054b8e15ab3613a2afc6cce5
-      size: 2570243
+      md5: c7eb24be29ade0fa312c9b2cff70b05d
+      size: 2573884
     - path: data/processed/val.parquet
       hash: md5
-      md5: 09a40aee3e9a398ad1a35bb5be2b13b6
-      size: 744107
+      md5: b178e1d292dd1de40857fdf1898a7357
+      size: 744075
     - path: src/features/build_features.py
       hash: md5
-      md5: 443b2afb573acdc39ce15055deb110c6
-      size: 3482
+      md5: 99e6f5acf5b65333d3002891f931ec10
+      size: 4320
     params:
       params.yaml:
-        preprocess:
+        features:
           numeric_impute_strategy: median
           categorical_impute_strategy: most_frequent
           drop_columns:
@@ -86,115 +87,215 @@ stages:
     outs:
     - path: artifacts/feature_metadata.joblib
       hash: md5
-      md5: b479d537814ea2b0d0706cb3a527f886
-      size: 5943
+      md5: c7fae6babf77b625e3011e1c4d1237d9
+      size: 7385
     - path: artifacts/preprocessor.joblib
       hash: md5
-      md5: 7bf4321e539028a2e8b3af13a15ce3c1
-      size: 11664
+      md5: 4902056107540025673adf7f001b75c1
+      size: 11632
     - path: data/processed/test_features.parquet
       hash: md5
-      md5: c1e624a55bc0db164f7bf18eb3fd4544
-      size: 1085637
+      md5: dffaa5d45528e475847eb9ffef899bc5
+      size: 1083447
     - path: data/processed/train_features.parquet
       hash: md5
-      md5: 622562aaa41f96b908ce6ea8f940228b
-      size: 3320874
+      md5: 60c8d015287093254f357a86dbdcb38b
+      size: 3318062
     - path: data/processed/val_features.parquet
       hash: md5
-      md5: e0320f6d5876c9a674bbd9c8da67de3d
-      size: 1086273
+      md5: 4656367491912b577ca384b86662e799
+      size: 1084085
   train:
-    cmd: python src/training/train.py
+    cmd: python -m src.training.train
     deps:
     - path: data/processed/train_features.parquet
       hash: md5
-      md5: 622562aaa41f96b908ce6ea8f940228b
-      size: 3320874
+      md5: 60c8d015287093254f357a86dbdcb38b
+      size: 3318062
     - path: data/processed/val_features.parquet
       hash: md5
-      md5: e0320f6d5876c9a674bbd9c8da67de3d
-      size: 1086273
-    - path: src/training/train.py
+      md5: 4656367491912b577ca384b86662e799
+      size: 1084085
+    - path: src/training/
       hash: md5
-      md5: 07e17abdeb323addb1cbb38899dc1b28
-      size: 3939
+      md5: 38af69773bf698a465cfa4833abed836.dir
+      size: 34861
+      nfiles: 8
     params:
       params.yaml:
-        evaluation.decision_threshold: 0.5
+        evaluation.cost_false_negative: 10.0
+        evaluation.cost_false_positive: 1.0
+        evaluation.risk_band_medium_ratio: 0.5
         mlflow:
           tracking_uri: sqlite:///mlflow/mlflow.db
           experiment_name: ev-battery-failure-prediction
           registered_model_name: ev-battery-failure-model
         target_column: battery_failure
         train:
-          model_type: random_forest
           random_state: 42
-          n_estimators: 400
-          max_depth: 12
-          min_samples_leaf: 3
-          class_weight: balanced
+          selection_metric: cv_pr_auc
+          cv_folds: 5
+          candidates:
+            logistic_regression:
+              C: 0.5
+              class_weight: balanced
+              max_iter: 2000
+            random_forest:
+              n_estimators: 400
+              max_depth: 12
+              min_samples_leaf: 3
+              class_weight: balanced
+            lightgbm:
+              n_estimators: 500
+              learning_rate: 0.03
+              num_leaves: 31
+              min_child_samples: 20
+              subsample: 0.8
+              subsample_freq: 1
+              colsample_bytree: 0.8
+            xgboost:
+              n_estimators: 500
+              learning_rate: 0.03
+              max_depth: 6
+              subsample: 0.8
+              colsample_bytree: 0.8
+          tuning:
+            enabled: true
+            model: lightgbm
+            n_trials: 25
     outs:
     - path: models/model.joblib
       hash: md5
-      md5: 3d741d9720e83de5e5f99e2d7183fa04
-      size: 17991881
+      md5: 13291c7ba0f257b46151f00231eb85fc
+      size: 6799
+    - path: models/model_comparison.json
+      hash: md5
+      md5: 2f5e37aa852b7c06385f67f445b85408
+      size: 914
+    - path: models/model_metadata.json
+      hash: md5
+      md5: 959a0561c62f5c39f2e51d808d365f03
+      size: 614
     - path: models/train_metrics.json
       hash: md5
-      md5: 9081dd042a10896afe6d93a1462bd36b
-      size: 229
+      md5: 875e480135579b0e5236b3250eaa59af
+      size: 414
   evaluate:
-    cmd: python src/evaluation/evaluate.py
+    cmd: python -m src.evaluation.evaluate
     deps:
+    - path: artifacts/feature_metadata.joblib
+      hash: md5
+      md5: c7fae6babf77b625e3011e1c4d1237d9
+      size: 7385
     - path: data/processed/test_features.parquet
       hash: md5
-      md5: c1e624a55bc0db164f7bf18eb3fd4544
-      size: 1085637
+      md5: dffaa5d45528e475847eb9ffef899bc5
+      size: 1083447
     - path: models/model.joblib
       hash: md5
-      md5: 3d741d9720e83de5e5f99e2d7183fa04
-      size: 17991881
+      md5: 13291c7ba0f257b46151f00231eb85fc
+      size: 6799
+    - path: models/model_metadata.json
+      hash: md5
+      md5: 959a0561c62f5c39f2e51d808d365f03
+      size: 614
     - path: src/evaluation/evaluate.py
       hash: md5
-      md5: 64fdc601a4472c392de693da71e5e215
-      size: 2411
+      md5: 07dd078cf3f557ae3c908ffd9668f424
+      size: 9101
+    - path: src/training/metrics.py
+      hash: md5
+      md5: d8eb3a361104ed4457792c8a4ca240f0
+      size: 2112
     params:
       params.yaml:
         evaluation:
-          decision_threshold: 0.5
-          metrics:
-          - roc_auc
-          - pr_auc
-          - f1
-          - precision
-          - recall
+          cost_false_negative: 10.0
+          cost_false_positive: 1.0
+          risk_band_medium_ratio: 0.5
+          min_roc_auc: 0.9
+          min_pr_auc: 0.55
+          max_pr_auc_regression: 0.02
         target_column: battery_failure
     outs:
     - path: models/test_metrics.json
       hash: md5
-      md5: b19a8093b6aec09d9c56e76bf49f9904
-      size: 282
+      md5: 4964bb8a8ca219f4cd34fcc65eb2c4d2
+      size: 551
+    - path: reports/feature_importance.json
+      hash: md5
+      md5: d05f6814c6f3e7ab87c5e7b93a63fa0c
+      size: 1112
+    - path: reports/figures/calibration.png
+      hash: md5
+      md5: c4163bc2f0c74f72f3ed4bc3a641d663
+      size: 35389
+    - path: reports/figures/confusion_matrix.png
+      hash: md5
+      md5: 87d1d847dc803dcfe1f10fb295ce6a36
+      size: 17664
+    - path: reports/figures/cost_curve.png
+      hash: md5
+      md5: d86586feb83d16c5244bedfe3c0df97f
+      size: 42042
+    - path: reports/figures/roc_pr_curves.png
+      hash: md5
+      md5: 8b2b6bcc27ad3be087846f6ae5b0689d
+      size: 61812
+    - path: reports/figures/shap_importance.png
+      hash: md5
+      md5: 4f41ee534762202bd38605326656dd71
+      size: 47587
   drift_check:
-    cmd: python src/monitoring/drift_check.py --current 
+    cmd: python -m src.monitoring.drift_check --current 
       data/processed/test.parquet
     deps:
     - path: data/processed/test.parquet
       hash: md5
-      md5: bb8b0baffc67346bbe908a9205b6828d
-      size: 743663
+      md5: 4de96566855c19a397c8ea508267da0b
+      size: 743595
     - path: data/reference/reference.parquet
       hash: md5
-      md5: 08d1c859fed0260b057444a0f22c7ad7
-      size: 2567806
+      md5: 5dc201945252f937242860dcbbd99089
+      size: 2571455
     - path: src/monitoring/drift_check.py
       hash: md5
-      md5: 9a4db79ce6478ff9e393f49cc1aff143
-      size: 3774
+      md5: 325c1edf4f676f238bed3e14c4fcf7d7
+      size: 6379
     params:
       params.yaml:
-        monitoring.drift_psi_threshold: 0.2
+        monitoring:
+          drift_psi_threshold: 0.2
+          drift_share_threshold: 0.1
+          drift_critical_psi: 1.0
     outs:
     - path: artifacts/drift_report.json
       hash: md5
-      md5: 6b65211328a1d640008280f320f3a5a7
-      size: 3017
+      md5: df409a56377226e8ba43c8285739e456
+      size: 2776
+  leakage_audit:
+    cmd: python -m src.evaluation.leakage_audit
+    deps:
+    - path: data/processed/train.parquet
+      hash: md5
+      md5: c7eb24be29ade0fa312c9b2cff70b05d
+      size: 2573884
+    - path: data/processed/val.parquet
+      hash: md5
+      md5: b178e1d292dd1de40857fdf1898a7357
+      size: 744075
+    - path: src/evaluation/leakage_audit.py
+      hash: md5
+      md5: d8950220be22e6c87028a8d3884f5d23
+      size: 4046
+    params:
+      params.yaml:
+        features.drop_columns:
+        - battery_serial
+        - vehicle_id
+        train.random_state: 42
+    outs:
+    - path: reports/leakage_audit.json
+      hash: md5
+      md5: fdfa3c04b836ef26778e92942f5125b0
+      size: 1045

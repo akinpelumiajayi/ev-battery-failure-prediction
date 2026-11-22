@@ -1,29 +1,46 @@
 groups:
-  - name: ev-battery-model-alerts
+  - name: ev-battery-model
     rules:
-      - alert: HighFailureRiskRate
-        expr: rate(predictions_total{risk_band="high"}[15m]) / rate(predictions_total[15m]) > 0.3
-        for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Unusually high proportion of high-risk predictions"
-          description: "More than 30% of predictions in the last 15m were flagged 'high' risk — check for upstream data issues or a genuine fleet-health event."
-
-      - alert: PredictionLatencyHigh
-        expr: histogram_quantile(0.95, rate(prediction_latency_seconds_bucket[5m])) > 0.5
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "P95 prediction latency above 500ms"
-          description: "Serving latency degraded — check pod resource limits / HPA scaling."
-
       - alert: APIDown
         expr: up{job="ev-battery-api"} == 0
         for: 2m
-        labels:
-          severity: critical
+        labels: { severity: critical }
         annotations:
-          summary: "EV battery prediction API is down"
-          description: "Prometheus cannot scrape the API — check pod status and readiness probes."
+          summary: EV battery prediction API is down
+          description: Prometheus cannot scrape the API — check pod status and readiness probes.
+
+      - alert: PredictionLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(prediction_latency_seconds_bucket[5m])) by (le)) > 0.5
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: p95 inference latency above 500 ms
+          description: Serving latency degraded — check CPU limits and HPA scaling.
+
+      - alert: PredictionErrorRateHigh
+        expr: sum(rate(prediction_errors_total[5m])) / clamp_min(sum(rate(predictions_total[5m])), 1e-9) > 0.01
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: More than 1% of prediction requests are failing
+
+      # Model-quality proxies — ground truth (actual failures) arrives weeks
+      # later, so shifts in the *output* and *input* distribution are the
+      # earliest drift signals available in real time.
+      - alert: HighRiskShareAnomalous
+        expr: sum(rate(predictions_total{risk_band="high"}[30m])) / sum(rate(predictions_total[30m])) > 0.30
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: Unusually high share of high-risk predictions
+          description: >-
+            Over 30% of vehicles flagged in the last 30m (training base rate ~7%, flag rate ~12%).
+            Either a genuine fleet-health event or upstream data drift — run the drift-check workflow.
+
+      - alert: InputMissingnessSpike
+        expr: sum(rate(request_missing_feature_ratio_sum[15m])) / sum(rate(request_missing_feature_ratio_count[15m])) > 0.5
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: Requests are missing more than half of the model's features on average
+          description: An upstream telemetry pipeline may be broken; predictions are relying heavily on imputation.

@@ -1,46 +1,62 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Release.Name }}-ev-battery-api
+  name: {{ include "ev-battery.fullname" . }}
   labels:
-    app: {{ .Release.Name }}-ev-battery-api
+    {{- include "ev-battery.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0   # never drop below capacity during a model rollout
   selector:
     matchLabels:
-      app: {{ .Release.Name }}-ev-battery-api
+      {{- include "ev-battery.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        app: {{ .Release.Name }}-ev-battery-api
+        {{- include "ev-battery.labels" . | nindent 8 }}
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/path: "/metrics"
-        prometheus.io/port: "8000"
-        checksum/config: {{ .Values.modelVersion | quote }}
+        prometheus.io/path: /metrics
+        prometheus.io/port: {{ .Values.service.targetPort | quote }}
     spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
-        - name: ev-battery-api
+        - name: api
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
-            - containerPort: {{ .Values.service.targetPort }}
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+          env:
+            - name: MODEL_VERSION
+              value: {{ .Values.image.tag | trunc 12 | quote }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          startupProbe:
+            httpGet: { path: {{ .Values.probes.path }}, port: http }
+            periodSeconds: 2
+            failureThreshold: 30
           readinessProbe:
-            httpGet:
-              path: {{ .Values.probes.path }}
-              port: {{ .Values.service.targetPort }}
+            httpGet: { path: {{ .Values.probes.path }}, port: http }
             initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.periodSeconds }}
           livenessProbe:
-            httpGet:
-              path: {{ .Values.probes.path }}
-              port: {{ .Values.service.targetPort }}
-            initialDelaySeconds: {{ add .Values.probes.initialDelaySeconds 10 }}
-            periodSeconds: {{ add .Values.probes.periodSeconds 10 }}
-          env:
-            - name: MODEL_VERSION
-              value: {{ .Values.modelVersion | quote }}
+            httpGet: { path: {{ .Values.probes.path }}, port: http }
+            periodSeconds: {{ mul .Values.probes.periodSeconds 2 }}
+            failureThreshold: 3
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

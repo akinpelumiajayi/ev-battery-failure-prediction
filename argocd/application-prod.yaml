@@ -1,6 +1,7 @@
 # Production Application. Deliberately NOT auto-synced — a human clicks
 # "Sync" in the ArgoCD UI (or runs `argocd app sync ev-battery-model-prod`)
-# after verifying the staging rollout and canary metrics look healthy.
+# after the promotion PR (.github/workflows/promote-prod.yml) is reviewed and
+# merged, and the staging rollout + canary metrics look healthy.
 # This is the standard staging-auto / prod-manual pattern.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -13,7 +14,7 @@ spec:
   project: default
 
   source:
-    repoURL: https://github.com/your-org/ev-battery-mlops.git
+    repoURL: https://github.com/akinpelumiajayi/ev-battery-failure-prediction.git
     targetRevision: main
     path: helm/ev-battery-model
     helm:

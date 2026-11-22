@@ -1,0 +1,57 @@
+[project]
+name = "ev-battery-failure-prediction"
+version = "2.0.0"
+description = "End-to-end MLOps pipeline predicting EV battery failure from fleet telemetry"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [{ name = "Akinpelumi Ajayi" }]
+
+# Dependencies are pinned in requirements/*.txt (compiled from *.in with uv).
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+extend-exclude = ["mlflow", "dvcstore"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "BLE", "SIM", "RUF", "PT"]
+ignore = [
+  "E501",    # long lines are handled by the formatter / readability
+  "RUF001", "RUF002", "RUF003",  # allow typographic dashes in docs/comments
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S311"]
+"src/evaluation/evaluate.py" = ["E402"]   # matplotlib backend must be set before pyplot import
+"demo/**" = ["S113"]
+"scripts/**" = ["S310", "S311"]  # local load generator: user-supplied URL, non-crypto RNG
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+known-third-party = ["mlflow"]  # a local ./mlflow/ tracking dir would otherwise look first-party
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = [
+  "ignore::DeprecationWarning",
+  "ignore:X does not have valid feature names:UserWarning",
+  "ignore:Using `httpx` with `starlette.testclient`",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["src/training/train.py", "src/evaluation/evaluate.py", "src/evaluation/leakage_audit.py",
+        "src/data/preprocess.py", "src/features/build_features.py"]  # exercised end-to-end by `dvc repro` in CI
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_ignores = true
+check_untyped_defs = true
+files = ["src"]
