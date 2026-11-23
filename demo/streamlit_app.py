@@ -17,7 +17,9 @@ import requests
 import streamlit as st
 
 API_URL = os.environ.get("API_URL", "http://localhost:8000").rstrip("/")
-TIMEOUT = 10
+# Generous because free-tier hosts (e.g. Render) sleep idle services; the
+# first request after a nap can take 30-60 s while the API container boots.
+TIMEOUT = 60
 
 st.set_page_config(page_title="EV Battery Failure Risk", page_icon="🔋", layout="wide")
 
@@ -66,14 +68,23 @@ PRESETS = {
 
 
 @st.cache_data(ttl=60)
+def _fetch_model_info() -> dict:
+    # Raises on failure; st.cache_data does not cache exceptions, so a failed
+    # call during a cold start is retried on the next page load.
+    resp = requests.get(f"{API_URL}/model", timeout=TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()
+
+
 def model_info() -> dict | None:
     try:
-        return requests.get(f"{API_URL}/model", timeout=TIMEOUT).json()
+        return _fetch_model_info()
     except requests.RequestException:
         return None
 
 
-info = model_info()
+with st.spinner("Connecting to the prediction API (it may take up to a minute to wake up)..."):
+    info = model_info()
 
 st.title("🔋 EV Battery Failure Risk")
 st.caption(

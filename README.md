@@ -11,6 +11,9 @@
 ![mypy](https://img.shields.io/badge/types-mypy-2A6DB2)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+**[▶ Live demo](https://ev-battery-demo.onrender.com/)** · **[API docs (Swagger)](https://ev-battery-api-8zjw.onrender.com/docs)**<br>
+<sub>Free-tier hosting: the first request after ~15 min idle takes 30–60 s while the service wakes up.</sub>
+
 `DVC` · `MLflow` · `Optuna` · `SHAP` · `FastAPI` · `Docker` · `Kubernetes` · `Helm` · `ArgoCD` · `GitHub Actions` · `Prometheus` · `Grafana` · `Streamlit`
 
 </div>
