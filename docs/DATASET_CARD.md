@@ -7,7 +7,8 @@
 | **Rows / columns** | 20,000 vehicles × 70 columns (1 ID, 1 serial, 67 features, 1 target) |
 | **Target** | `battery_failure` (0/1), positive rate **6.92 %** |
 | **Missingness** | ~3.8 % of cells, spread across most sensor columns |
-| **Source** | *Add the original source / licence here (e.g. the Kaggle dataset URL).* |
+| **Source** | [EV Battery Health Prediction Dataset (20K)](https://www.kaggle.com/datasets/srisyra02/ev-battery-health-prediction-dataset-20k) by Srimathy Sivanessan on Kaggle (version 1) |
+| **Licence** | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). The GitHub release mirror redistributes the file unmodified under the same licence, with attribution to the original author. |
 
 ## Feature groups
 
@@ -30,7 +31,8 @@ no fully empty column.
 
 ## Observations: synthetic origin
 
-Several properties suggest the data was **simulated** rather than collected from a real fleet:
+The Kaggle description confirms the records are **simulated** ("20,000 simulated electric vehicle battery
+telemetry records"). The data itself shows this too, which is a useful sanity check on the audit:
 
 * `vehicle_type` is spread uniformly across every brand (Audi, BMW and Ford each have ~150 Trucks, Vans,
   Sedans, …), and model/type pairs are often implausible (a *Mustang Mach-E* labelled *Truck*).

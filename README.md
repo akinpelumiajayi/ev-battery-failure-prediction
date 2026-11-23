@@ -294,9 +294,9 @@ simulated drifted batch trips the alarm, so the monitor itself is tested.
 
 ## Limitations and next steps
 
-* **The data looks synthetic** (for example, some model/body-type pairs are implausible, such as a
-  "Mustang Mach-E" labelled *Truck*). The engineering transfers to real fleet data; the absolute metrics
-  would not. See the [dataset card](docs/DATASET_CARD.md).
+* **The data is simulated.** The Kaggle author says so, and the data shows it too: some model/body-type
+  pairs are implausible, such as a "Mustang Mach-E" labelled *Truck*. The engineering transfers to real
+  fleet data; the absolute metrics would not. See the [dataset card](docs/DATASET_CARD.md).
 * **Probabilities are not calibrated.** `class_weight="balanced"` inflates them (Brier 0.043); decisions
   use the tuned threshold, so this affects the displayed probability, not the decision quality. Isotonic
   calibration is the next step if probabilities are consumed directly.
@@ -310,4 +310,7 @@ See the [model card](docs/MODEL_CARD.md) for intended use, evaluation details an
 
 ## License
 
-[MIT](LICENSE) © Akinpelumi Ajayi
+Code: [MIT](LICENSE) © Akinpelumi Ajayi.
+
+Data: [EV Battery Health Prediction Dataset (20K)](https://www.kaggle.com/datasets/srisyra02/ev-battery-health-prediction-dataset-20k)
+by Srimathy Sivanessan, used under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
