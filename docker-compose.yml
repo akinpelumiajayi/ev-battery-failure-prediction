@@ -17,6 +17,11 @@ services:
     ports: ["8000:8000"]
     environment:
       MODEL_VERSION: local-dev
+      # Log every prediction for the drift check (`make drift-production`).
+      INFERENCE_LOG_URI: /var/lib/ev-battery/inference-logs
+      INFERENCE_LOG_FLUSH_SECONDS: "30"
+    volumes:
+      - inference_logs:/var/lib/ev-battery/inference-logs
     restart: unless-stopped
 
   demo:
@@ -73,3 +78,6 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+volumes:
+  inference_logs:   # the API's inference log; survives `docker compose down` (not `make docker-down`, which uses -v)

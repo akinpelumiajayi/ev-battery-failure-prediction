@@ -38,6 +38,19 @@ spec:
           env:
             - name: MODEL_VERSION
               value: {{ .Values.image.tag | trunc 12 | quote }}
+            {{- if .Values.inferenceLog.enabled }}
+            - name: INFERENCE_LOG_URI
+              value: {{ required "inferenceLog.uri is required when inferenceLog.enabled" .Values.inferenceLog.uri | quote }}
+            - name: INFERENCE_LOG_SAMPLE_RATE
+              value: {{ .Values.inferenceLog.sampleRate | quote }}
+            - name: INFERENCE_LOG_FLUSH_SECONDS
+              value: {{ .Values.inferenceLog.flushSeconds | quote }}
+          {{- with .Values.inferenceLog.existingSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ . }}
+          {{- end }}
+            {{- end }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           resources:

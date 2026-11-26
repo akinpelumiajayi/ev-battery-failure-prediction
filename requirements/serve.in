@@ -10,3 +10,5 @@ fastapi
 uvicorn[standard]
 pydantic>=2
 prometheus-client
+pyarrow          # inference log: Parquet files
+boto3            # inference log: S3-compatible object storage

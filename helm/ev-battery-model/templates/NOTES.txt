@@ -7,7 +7,7 @@ Try it:
   kubectl port-forward svc/{{ include "ev-battery.fullname" . }} -n {{ .Release.Namespace }} 8000:{{ .Values.service.port }}
   curl localhost:8000/health
   open http://localhost:8000/docs
-{{- if .Values.ingress.enabled }}
+{{- if .Values.httpRoute.enabled }}
 
-Exposed externally at: http://{{ .Values.ingress.host }}
+Exposed through the Gateway at: {{ range .Values.httpRoute.hostnames }}http://{{ . }} {{ end }}
 {{- end }}

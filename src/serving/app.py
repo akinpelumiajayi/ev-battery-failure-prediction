@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
+from src.serving import inference_log
 from src.serving.schemas import (
     BatchRequest,
     BatchResponse,
@@ -122,7 +124,13 @@ def load_artifacts() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     load_artifacts()
+    # Off unless INFERENCE_LOG_URI is set (see src/serving/inference_log.py).
+    _state["inference_log"] = inference_log.from_env()
+    if _state["inference_log"] is not None:
+        _state["inference_log"].start()
     yield
+    if _state.get("inference_log") is not None:
+        _state["inference_log"].stop()  # flush what is still buffered
 
 
 app = FastAPI(
@@ -196,7 +204,33 @@ def _predict(
                 model_version=_state["version"],
             )
         )
+    if _state.get("inference_log") is not None:
+        try:
+            _state["inference_log"].log(_log_records(raw, out, endpoint))
+        except Exception:  # logging must never fail a prediction
+            inference_log.RECORDS_DROPPED.labels(reason="record_error").inc(len(out))
+            logger.exception("Could not build inference-log records")
     return out, raw, X
+
+
+def _log_records(raw: pd.DataFrame, preds: list[PredictionResponse], endpoint: str) -> list[dict[str, Any]]:
+    """One inference-log record per prediction: raw inputs + what the model decided."""
+    now = pd.Timestamp.now(tz="UTC")
+    request_id = uuid.uuid4().hex
+    inputs: list[dict[str, Any]] = raw.astype(object).where(raw.notna(), None).to_dict("records")  # type: ignore[assignment]
+    return [
+        {
+            "ts": now,
+            "request_id": request_id,
+            "endpoint": endpoint,
+            "model_version": p.model_version,
+            **row,
+            "failure_probability": p.failure_probability,
+            "risk_band": p.risk_band,
+            "prediction": p.prediction,
+        }
+        for row, p in zip(inputs, preds, strict=True)
+    ]
 
 
 def _contributions(X: pd.DataFrame) -> tuple[np.ndarray, float]:

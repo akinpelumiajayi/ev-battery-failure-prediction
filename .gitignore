@@ -4,6 +4,8 @@
 /data/reference
 /models/*.joblib
 /artifacts/*.joblib
+# Ad-hoc drift reports (make drift-demo / drift-production); the pipeline's own is drift_report.json
+/artifacts/drift_report_*.json
 
 # DVC local remote storage (this IS the "storage" — keep it out of git,
 # it's restorable via `dvc pull` from whoever has this folder / a real remote)
@@ -30,6 +32,9 @@ venv/
 # Simulated drift batches (regenerable: python -m src.monitoring.simulate_drift)
 /data/drift
 
+# Inference logs copied out of the local stack (make drift-production)
+/data/inference_logs
+
 # Tooling caches
 .coverage
 coverage.xml
@@ -37,3 +42,6 @@ htmlcov/
 .ruff_cache/
 .mypy_cache/
 .env
+
+# CLIs downloaded by scripts/canary.sh
+/.bin/

@@ -1,0 +1,222 @@
+# OPTIONAL: Argo Rollouts canary for production, an opt-in replacement for the
+# Helm chart's rolling-update Deployment.
+#
+# Traffic is split by the Kubernetes Gateway API (any conformant controller;
+# CI uses Envoy Gateway), so 10 % means 10 % of requests, not "1 pod of 4".
+# Argo Rollouts' Gateway API plugin rewrites the HTTPRoute weights at each step:
+#
+#   10 % -> 5 min -> analysis -> 50 % -> 10 min -> analysis -> 100 %
+#
+# The analysis looks at the *canary pods only* and checks the service is
+# healthy (p95 latency, error rate) AND the model behaves like the validated
+# one (share of "high" risk predictions). Any failure aborts the rollout and
+# the route snaps back to 100 % stable. Pods that never become ready (crash,
+# bad image, failing /health) abort the same way via the progress deadline.
+#
+# Cluster prerequisites (scripts/kind-addons.sh installs all of them on kind):
+#   - Argo Rollouts controller + the argoproj-labs/gatewayAPI plugin
+#   - a Gateway API controller with a GatewayClass named "eg"
+#   - kube-prometheus-stack (Prometheus at prometheus-operated.monitoring.svc),
+#     which scrapes these pods through the PodMonitor below
+#
+# Not deployed by the ArgoCD Applications. CI runs it on kind via the
+# argocd/canary/kind overlay (same resources, shorter timings): 90/10 split,
+# pause, promote, analysis passing for a good model, analysis aborting a model
+# that is fast but wrong, and the progress deadline aborting a broken image.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: ev-battery-gateway
+spec:
+  gatewayClassName: eg
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ev-battery-api
+spec:
+  parentRefs:
+    - name: ev-battery-gateway
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      # Weights are owned by Argo Rollouts during a rollout.
+      backendRefs:
+        - name: ev-battery-api-stable
+          port: 80
+          weight: 100
+        - name: ev-battery-api-canary
+          port: 80
+          weight: 0
+---
+# Two Services over the same pods; Argo Rollouts pins each one to the stable or
+# canary ReplicaSet by adding a rollouts-pod-template-hash selector.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ev-battery-api-stable
+spec:
+  selector:
+    app.kubernetes.io/name: ev-battery-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ev-battery-api-canary
+spec:
+  selector:
+    app.kubernetes.io/name: ev-battery-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Scrape every pod of the Rollout (stable and canary) so the analysis can
+# filter samples by pod name.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: ev-battery-api
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ev-battery-api
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: ev-battery-api
+spec:
+  replicas: 3
+  # Abort (and fall back to stable) if a step's canary pods aren't ready in
+  # time. Kept longer than an analysis step (5 x 1-2 min) so a slow but
+  # healthy analysis is never mistaken for a stuck rollout.
+  progressDeadlineSeconds: 900
+  progressDeadlineAbort: true
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ev-battery-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ev-battery-api
+    spec:
+      containers:
+        - name: api
+          # pinned to an immutable git-SHA tag by the promotion PR
+          image: ghcr.io/akinpelumiajayi/ev-battery-failure-prediction:latest
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 5
+  strategy:
+    canary:
+      stableService: ev-battery-api-stable
+      canaryService: ev-battery-api-canary
+      trafficRouting:
+        plugins:
+          argoproj-labs/gatewayAPI:
+            httpRoute: ev-battery-api
+            namespace: mlops-prod
+      steps:
+        - setWeight: 10
+        - pause: { duration: 5m }
+        - analysis:
+            templates:
+              - templateName: model-serving-health
+            args:
+              - name: canary-hash
+                valueFrom:
+                  podTemplateHashValue: Latest
+              - name: namespace
+                value: mlops-prod
+        - setWeight: 50
+        - pause: { duration: 10m }
+        - analysis:
+            templates:
+              - templateName: model-serving-health
+            args:
+              - name: canary-hash
+                valueFrom:
+                  podTemplateHashValue: Latest
+              - name: namespace
+                value: mlops-prod
+        - setWeight: 100
+---
+# A series that doesn't exist yet (no errors so far, no "high" prediction so
+# far, no traffic at all) makes Prometheus return an empty result, which Argo
+# Rollouts counts as an Error. Every query therefore falls back to 0
+# (`or vector(0)`); with no traffic at all the high-risk share is 0/0 = NaN,
+# which passes.
+#
+# Every query is scoped to the canary's pods: they are named
+# ev-battery-api-<canary-hash>-<suffix>, and Prometheus labels samples by pod
+# and namespace (both passed in as args by the Rollout).
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: model-serving-health
+spec:
+  args:
+    - name: canary-hash
+    - name: namespace
+  metrics:
+    # Is the service healthy?
+    - name: p95-latency
+      interval: 1m
+      count: 5
+      # NaN: pods exist but have served nothing yet in the window
+      successCondition: isNaN(result[0]) || result[0] < 0.25
+      failureLimit: 2
+      provider:
+        prometheus:
+          address: http://prometheus-operated.monitoring.svc:9090
+          query: |
+            histogram_quantile(0.95, sum(rate(
+              prediction_latency_seconds_bucket{namespace="{{args.namespace}}", pod=~"ev-battery-api-{{args.canary-hash}}-.*"}[5m]
+            )) by (le)) or vector(0)
+    - name: error-rate
+      interval: 1m
+      count: 5
+      successCondition: result[0] < 0.01
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: http://prometheus-operated.monitoring.svc:9090
+          query: |
+            (sum(rate(prediction_errors_total{namespace="{{args.namespace}}", pod=~"ev-battery-api-{{args.canary-hash}}-.*"}[5m])) or vector(0))
+            / clamp_min(sum(rate(predictions_total{namespace="{{args.namespace}}", pod=~"ev-battery-api-{{args.canary-hash}}-.*"}[5m])) or vector(0), 1e-9)
+
+    # Does the model behave like the one we validated? A broken model can be
+    # fast and error-free yet flag far too many (or too few) packs. On the test
+    # set the champion flags recall x prevalence / precision
+    # = 0.952 x 0.0692 / 0.571 ~ 11.5 % of packs as "high" risk; the wide 5-25 %
+    # band tolerates real shifts (e.g. a heatwave) but catches a broken model.
+    # NaN (0/0, no canary traffic yet) counts as a pass, not a failure.
+    - name: high-risk-share
+      interval: 2m
+      count: 5
+      successCondition: isNaN(result[0]) || (result[0] >= 0.05 && result[0] <= 0.25)
+      failureLimit: 2
+      provider:
+        prometheus:
+          address: http://prometheus-operated.monitoring.svc:9090
+          query: |
+            (sum(rate(predictions_total{namespace="{{args.namespace}}", risk_band="high", pod=~"ev-battery-api-{{args.canary-hash}}-.*"}[10m])) or vector(0))
+            / (sum(rate(predictions_total{namespace="{{args.namespace}}", pod=~"ev-battery-api-{{args.canary-hash}}-.*"}[10m])) or vector(0))

@@ -1,7 +1,7 @@
 name: CI
 
 # quality ──▶ train (DVC repro + quality & champion/challenger gates)
-#                 └──▶ image (build ─▶ container smoke test ─▶ kind + Helm smoke test ─▶ push to GHCR on main)
+#                 └──▶ image (build ─▶ container smoke test ─▶ kind: GitOps staging + prod, canary with Prometheus analysis ─▶ push to GHCR on main)
 #
 # Also runnable on demand (Actions tab, or dispatched by drift-check.yml when
 # the monitoring loop detects data drift) to retrain the model.
@@ -28,6 +28,7 @@ permissions:
 env:
   PYTHON_VERSION: "3.12"
   IMAGE_NAME: ghcr.io/${{ github.repository }}
+  ARGOCD_VERSION: v3.6.2
 
 jobs:
   quality:
@@ -200,18 +201,150 @@ jobs:
         with:
           cluster_name: ci
 
-      - name: Helm install on kind + in-cluster smoke test
+      # What a production cluster already has: Envoy Gateway (Gateway API) with a
+      # shared "public" Gateway, Argo Rollouts, kube-prometheus-stack and
+      # metrics-server. Same script as `make canary-test` / `make canary-demo`.
+      - name: Install cluster add-ons (Gateway API, Argo Rollouts, Prometheus, metrics-server)
+        env:
+          CLUSTER: ci
+        run: bash scripts/kind-addons.sh
+
+      - name: Install ArgoCD on kind
         run: |
           kind load docker-image ev-battery-api:ci --name ci
-          helm install ev-battery helm/ev-battery-model \
-            -f helm/ev-battery-model/values-staging.yaml \
-            --set image.repository=ev-battery-api --set image.tag=ci --set image.pullPolicy=Never \
-            -n mlops-staging --create-namespace --wait --timeout 3m
+          kubectl create namespace argocd
+          kubectl apply -n argocd --server-side --force-conflicts \
+            -f "https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml"
+          kubectl wait --for=condition=available deployment --all -n argocd --timeout=5m
+          kubectl rollout status statefulset/argocd-application-controller -n argocd --timeout=5m
+
+      # GitOps proof: nobody runs helm/kubectl against the workload. We apply the
+      # real argocd/application-staging.yaml, pinned to the commit under test and
+      # to the image built above (not in GHCR yet), and ArgoCD pulls the chart
+      # from GitHub and reconciles the cluster to it.
+      - name: GitOps staging - ArgoCD auto-syncs this commit + in-cluster smoke test
+        env:
+          REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+          APP: application/ev-battery-model-staging
+          SVC: svc/ev-battery-model-staging-ev-battery-api
+        run: |
+          yq '.spec.source.targetRevision = strenv(REVISION)
+              | .spec.source.helm.parameters = [
+                  {"name": "image.repository", "value": "ev-battery-api"},
+                  {"name": "image.tag",        "value": "ci"},
+                  {"name": "image.pullPolicy", "value": "Never"}]' \
+            argocd/application-staging.yaml | tee /dev/stderr | kubectl apply -f -
+
+          kubectl wait "$APP" -n argocd --for=jsonpath='{.status.sync.status}'=Synced --timeout=5m
+          kubectl wait "$APP" -n argocd --for=jsonpath='{.status.health.status}'=Healthy --timeout=5m
           kubectl get all -n mlops-staging
-          kubectl port-forward svc/ev-battery-ev-battery-api -n mlops-staging 8080:80 &
+
+          kubectl port-forward "$SVC" -n mlops-staging 8080:80 &
           for i in $(seq 1 20); do curl -sf localhost:8080/health && break; sleep 1; done
           curl -sf localhost:8080/model | tee /dev/stderr | grep -q decision_threshold
           curl -sf -X POST localhost:8080/predict -H 'Content-Type: application/json' -d '{}' | grep -q risk_band
+
+      - name: GitOps self-heal (ArgoCD restores a deleted resource)
+        env:
+          APP: application/ev-battery-model-staging
+          SVC: svc/ev-battery-model-staging-ev-battery-api
+        run: |
+          kubectl delete "$SVC" -n mlops-staging --wait
+          for i in $(seq 1 60); do kubectl get "$SVC" -n mlops-staging >/dev/null 2>&1 && break; sleep 2; done
+          kubectl get "$SVC" -n mlops-staging
+          kubectl wait "$APP" -n argocd --for=jsonpath='{.status.sync.status}'=Synced --timeout=2m
+          {
+            echo "### GitOps (ArgoCD ${ARGOCD_VERSION} on kind)"
+            echo "- **Staging:** auto-synced \`$(kubectl get "$APP" -n argocd -o jsonpath='{.status.sync.revision}')\` from Git → **$(kubectl get "$APP" -n argocd -o jsonpath='{.status.health.status}')** (HPA included)"
+            echo "- Deleted \`${SVC#svc/}\` by hand → ArgoCD self-healed it back"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The real argocd/application-prod.yaml and values-prod.yaml: 3 replicas,
+      # HPA, PDB, ServiceMonitor and an HTTPRoute on the shared Gateway. Only CPU
+      # and memory requests are shrunk to fit a CI runner.
+      - name: GitOps prod - manual gate holds, human sync, scraped by Prometheus, served via Gateway
+        env:
+          REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+          APP: application/ev-battery-model-prod
+          DEPLOY: deployment/ev-battery-model-prod-ev-battery-api
+        run: |
+          yq '.spec.source.targetRevision = strenv(REVISION)
+              | .spec.source.helm.parameters = [
+                  {"name": "image.repository", "value": "ev-battery-api"},
+                  {"name": "image.tag",        "value": "ci"},
+                  {"name": "image.pullPolicy", "value": "Never"},
+                  {"name": "resources.requests.cpu",    "value": "100m"},
+                  {"name": "resources.requests.memory", "value": "256Mi"}]' \
+            argocd/application-prod.yaml | tee /dev/stderr | kubectl apply -f -
+
+          # Gate: prod has no automated sync. ArgoCD must see the diff and deploy nothing.
+          kubectl wait "$APP" -n argocd --for=jsonpath='{.status.sync.status}'=OutOfSync --timeout=3m
+          sleep 30
+          test "$(kubectl get "$APP" -n argocd -o jsonpath='{.status.sync.status}')" = OutOfSync
+          test -z "$(kubectl get deployment -n mlops-prod -o name 2>/dev/null)"
+          echo "Manual gate held: prod is OutOfSync and nothing was deployed"
+
+          # The human step: what `argocd app sync ev-battery-model-prod` (or the UI's
+          # Sync button) does. Like them, carry the Application's own syncOptions
+          # (CreateNamespace=true) and retry policy into the operation: ArgoCD
+          # applies only what the operation itself lists.
+          kubectl get "$APP" -n argocd -o json \
+            | jq --arg rev "$REVISION" '{operation: {
+                initiatedBy: {username: "ci"},
+                sync: {revision: $rev, syncOptions: (.spec.syncPolicy.syncOptions // [])},
+                retry: (.spec.syncPolicy.retry // {})}}' \
+            | tee /dev/stderr > sync-operation.json
+          kubectl patch "$APP" -n argocd --type merge --patch-file sync-operation.json
+          kubectl wait "$APP" -n argocd --for=jsonpath='{.status.sync.status}'=Synced --timeout=5m
+          kubectl wait "$APP" -n argocd --for=jsonpath='{.status.health.status}'=Healthy --timeout=6m
+          kubectl get deployment,hpa,pdb,servicemonitor,httproute,pods -n mlops-prod
+          test "$(kubectl get "$DEPLOY" -n mlops-prod -o jsonpath='{.status.readyReplicas}')" = 3
+
+          # ServiceMonitor: Prometheus must scrape all 3 prod pods, including app metrics.
+          kubectl port-forward svc/prometheus-operated -n monitoring 9091:9090 &
+          scraped=0
+          for i in $(seq 1 40); do
+            scraped=$(curl -s localhost:9091/api/v1/query \
+              --data-urlencode 'query=count(model_info{namespace="mlops-prod"})' \
+              | jq -r '.data.result[0].value[1] // 0')
+            [ "$scraped" = 3 ] && break
+            sleep 5
+          done
+          echo "Prometheus scrapes model_info from $scraped prod pods"
+          test "$scraped" = 3
+
+          # HTTPRoute: the shared Gateway routes the prod hostname to the API.
+          GW=$(kubectl get svc -n envoy-gateway-system -o jsonpath='{.items[0].metadata.name}' \
+            -l gateway.envoyproxy.io/owning-gateway-name=public,gateway.envoyproxy.io/owning-gateway-namespace=gateway-system)
+          kubectl port-forward "svc/$GW" -n envoy-gateway-system 8092:80 &
+          for i in $(seq 1 30); do curl -sf -H 'Host: ev-battery.example.com' localhost:8092/health && break; sleep 1; done
+          curl -sf -H 'Host: ev-battery.example.com' localhost:8092/health | grep -q '"model_loaded":true'
+
+          {
+            echo "- **Prod:** stayed **OutOfSync with nothing deployed** until a manual sync → **$(kubectl get "$APP" -n argocd -o jsonpath='{.status.health.status}')**: 3 replicas, HPA, PDB"
+            echo "- **ServiceMonitor:** Prometheus scrapes \`model_info\` from all $scraped prod pods"
+            echo "- **HTTPRoute:** \`ev-battery.example.com\` served through the shared Gateway"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Progressive delivery: argocd/canary (Argo Rollouts + Gateway API +
+      # Prometheus analysis). Same script as `make canary-test`.
+      - name: Canary - 90/10 split, analysis passes a good model, aborts a wrong one and a broken one
+        env:
+          CLUSTER: ci
+          SOURCE_IMAGE: ev-battery-api:ci
+        run: bash scripts/canary.sh test
+
+      - name: Kubernetes diagnostics
+        if: failure()
+        run: |
+          kubectl get application -n argocd -o yaml || true
+          kubectl get pods -A || true
+          kubectl logs -n argocd statefulset/argocd-application-controller --tail=100 || true
+          kubectl get deployment,hpa,pdb,httproute -n mlops-prod -o yaml || true
+          kubectl get rollout,analysisrun,httproute,gateway,svc -n rollouts-ci -o yaml || true
+          kubectl get events -A --sort-by=.lastTimestamp | tail -60 || true
+          kubectl logs -n argo-rollouts deployment/argo-rollouts --tail=150 || true
+          kubectl logs -n envoy-gateway-system deployment/envoy-gateway --tail=50 || true
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

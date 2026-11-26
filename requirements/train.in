@@ -1,6 +1,6 @@
 # Full pipeline: data validation, versioning, training, tracking, tuning
 -r serve.in
-pyarrow          # parquet I/O for pipeline stages (not needed to serve)
+# (pyarrow comes from serve.in)
 pandera>=0.24
 mlflow>=2.20,<3
 sqlalchemy<2.1   # mlflow 2.x imports pool classes removed in SQLAlchemy 2.1

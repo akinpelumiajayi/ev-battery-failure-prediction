@@ -31,15 +31,28 @@ podDisruptionBudget:
   enabled: true
   minAvailable: 1
 
-ingress:
+# External exposure via a Gateway API HTTPRoute attached to a shared Gateway.
+# Off by default so the chart installs on a cluster without the Gateway API.
+httpRoute:
   enabled: false
-  className: nginx
-  host: ev-battery.local
+  hostnames: []
+  parentRefs: []        # e.g. [{name: public, namespace: gateway-system}]
 
 probes:
   path: /health
   initialDelaySeconds: 5
   periodSeconds: 10
+
+# Inference log (src/serving/inference_log.py): every prediction written as
+# Parquet to S3-compatible object storage, read back by the drift check.
+# Credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, optionally
+# AWS_ENDPOINT_URL / AWS_DEFAULT_REGION) come from an existing Secret.
+inferenceLog:
+  enabled: false
+  uri: ""                 # e.g. s3://ev-battery-inference/prod
+  sampleRate: 1.0
+  flushSeconds: 60
+  existingSecret: ""      # name of the Secret holding the AWS_* variables
 
 # Prometheus Operator integration (kube-prometheus-stack). Off by default so
 # the chart installs on a bare cluster (e.g. kind in CI) without the CRDs.

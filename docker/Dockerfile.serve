@@ -26,7 +26,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # libgomp: OpenMP runtime required by LightGBM / XGBoost wheels
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --uid 10001 --create-home --shell /usr/sbin/nologin appuser
+    && useradd --uid 10001 --create-home --shell /usr/sbin/nologin appuser \
+    # Writable mount point for a local inference log (docker-compose). In
+    # Kubernetes the root FS is read-only and the log goes to object storage.
+    && mkdir -p /var/lib/ev-battery/inference-logs \
+    && chown -R 10001:10001 /var/lib/ev-battery
 
 COPY --from=builder /install /usr/local
 
