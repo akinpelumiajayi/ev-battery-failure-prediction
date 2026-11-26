@@ -4,6 +4,8 @@
 /data/reference
 /models/*.joblib
 /artifacts/*.joblib
+# Ad-hoc drift reports (make drift-demo / drift-production); the pipeline's own is drift_report.json
+/artifacts/drift_report_*.json
 
 # DVC local remote storage (this IS the "storage" — keep it out of git,
 # it's restorable via `dvc pull` from whoever has this folder / a real remote)
