@@ -284,9 +284,17 @@ jobs:
           test -z "$(kubectl get deployment -n mlops-prod -o name 2>/dev/null)"
           echo "Manual gate held: prod is OutOfSync and nothing was deployed"
 
-          # The human step: what `argocd app sync ev-battery-model-prod` does.
-          kubectl patch "$APP" -n argocd --type merge \
-            -p "{\"operation\":{\"initiatedBy\":{\"username\":\"ci\"},\"sync\":{\"revision\":\"${REVISION}\"}}}"
+          # The human step: what `argocd app sync ev-battery-model-prod` (or the UI's
+          # Sync button) does. Like them, carry the Application's own syncOptions
+          # (CreateNamespace=true) and retry policy into the operation: ArgoCD
+          # applies only what the operation itself lists.
+          kubectl get "$APP" -n argocd -o json \
+            | jq --arg rev "$REVISION" '{operation: {
+                initiatedBy: {username: "ci"},
+                sync: {revision: $rev, syncOptions: (.spec.syncPolicy.syncOptions // [])},
+                retry: (.spec.syncPolicy.retry // {})}}' \
+            | tee /dev/stderr > sync-operation.json
+          kubectl patch "$APP" -n argocd --type merge --patch-file sync-operation.json
           kubectl wait "$APP" -n argocd --for=jsonpath='{.status.sync.status}'=Synced --timeout=5m
           kubectl wait "$APP" -n argocd --for=jsonpath='{.status.health.status}'=Healthy --timeout=6m
           kubectl get deployment,hpa,pdb,servicemonitor,httproute,pods -n mlops-prod
