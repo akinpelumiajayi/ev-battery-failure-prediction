@@ -51,9 +51,15 @@ test:  ## Unit + API tests with coverage
 check: lint typecheck test  ## Everything CI checks before training
 
 # ---- drift demo ----------------------------------------------------------------
-.PHONY: drift-check drift-demo
+.PHONY: drift-check drift-demo drift-production
 drift-check:  ## PSI drift check of the held-out test batch (expect: no drift)
 	$(PY) -m src.monitoring.drift_check --current data/processed/test.parquet
+
+drift-production:  ## Drift check on the traffic the local stack logged (after docker-up + load-test; logs flush every 30 s)
+	rm -rf data/inference_logs
+	docker compose cp api:/var/lib/ev-battery/inference-logs data/inference_logs
+	$(PY) -m src.monitoring.inference_logs --uri data/inference_logs --min-rows 100 --out data/drift/production.parquet
+	$(PY) -m src.monitoring.drift_check --current data/drift/production.parquet --report artifacts/drift_report_production.json
 
 drift-demo:  ## Simulate a heatwave batch and watch the drift alarm fire
 	$(PY) -m src.monitoring.simulate_drift --scenario heatwave
@@ -87,7 +93,7 @@ docker-down:  ## Stop the local stack
 	docker compose down -v
 
 # ---- Kubernetes ----------------------------------------------------------------
-.PHONY: kind-up kind-deploy kind-down helm-lint argocd-bootstrap
+.PHONY: kind-up kind-deploy kind-down helm-lint argocd-bootstrap kind-addons canary-test canary-demo
 helm-lint:  ## Lint the Helm chart for every environment
 	helm lint helm/ev-battery-model -f helm/ev-battery-model/values-staging.yaml
 	helm lint helm/ev-battery-model -f helm/ev-battery-model/values-prod.yaml
@@ -109,6 +115,16 @@ kind-down:  ## Delete the kind cluster
 argocd-bootstrap:  ## Register the staging + prod ArgoCD Applications
 	kubectl apply -f argocd/application-staging.yaml
 	kubectl apply -f argocd/application-prod.yaml
+
+kind-addons:  ## Install Gateway API (Envoy Gateway), Argo Rollouts, Prometheus and metrics-server on kind
+	CLUSTER=ev-battery bash scripts/kind-addons.sh
+
+canary-test:  ## Canary on kind, same as CI: 90/10 split, analysis passes good / aborts wrong + broken (needs kind-up + docker-build)
+	CLUSTER=ev-battery SOURCE_IMAGE=$(IMAGE) bash scripts/canary.sh install
+	CLUSTER=ev-battery SOURCE_IMAGE=$(IMAGE) bash scripts/canary.sh test
+
+canary-demo:  ## Canary paused at 10 % + Argo Rollouts dashboard on http://localhost:3100 (needs kind-up + docker-build)
+	CLUSTER=ev-battery SOURCE_IMAGE=$(IMAGE) bash scripts/canary.sh demo
 
 # ---- housekeeping --------------------------------------------------------------
 .PHONY: clean

@@ -25,21 +25,36 @@ jobs:
 
       - name: Resolve tag
         id: tag
+        env:
+          # Passed via env, never interpolated into the script: the input is free text.
+          INPUT_TAG: ${{ inputs.image_tag }}
         run: |
-          TAG="${{ inputs.image_tag }}"
+          TAG="$INPUT_TAG"
           if [ -z "$TAG" ]; then
             TAG=$(grep -E '^  tag:' helm/ev-battery-model/values-staging.yaml | sed -E 's/.*"?([0-9a-f]{40})"?.*/\1/')
+          fi
+          # Only immutable git-SHA tags may reach production.
+          if ! [[ "$TAG" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::'$TAG' is not a 40-character git SHA"
+            exit 1
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Promoting $TAG"
 
       - name: Verify the image exists in GHCR
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker manifest inspect "ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.tag }}" > /dev/null
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker manifest inspect "ghcr.io/${{ github.repository }}:${TAG}" > /dev/null
 
       - name: Pin prod values
-        run: sed -i -E "s/^(  tag: )\"[^\"]*\"/\1\"${{ steps.tag.outputs.tag }}\"/" helm/ev-battery-model/values-prod.yaml
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          sed -i -E "s/^(  tag: )\"[^\"]*\"/\1\"${TAG}\"/" helm/ev-battery-model/values-prod.yaml
+          grep -E '^  tag:' helm/ev-battery-model/values-prod.yaml
 
       - name: Open pull request
         uses: peter-evans/create-pull-request@v7

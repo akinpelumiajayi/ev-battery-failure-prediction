@@ -30,6 +30,9 @@ venv/
 # Simulated drift batches (regenerable: python -m src.monitoring.simulate_drift)
 /data/drift
 
+# Inference logs copied out of the local stack (make drift-production)
+/data/inference_logs
+
 # Tooling caches
 .coverage
 coverage.xml
@@ -37,3 +40,6 @@ htmlcov/
 .ruff_cache/
 .mypy_cache/
 .env
+
+# CLIs downloaded by scripts/canary.sh
+/.bin/

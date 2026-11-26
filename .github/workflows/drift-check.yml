@@ -5,8 +5,18 @@ name: Drift check
 #   1. opens (or updates) a GitHub issue with the drifted features, and
 #   2. dispatches the CI workflow to retrain, evaluate and gate a new model.
 #
-# The schedule checks the held-out batch (expected: healthy). Run it manually
-# with a simulated scenario to watch the whole loop fire end to end.
+# Batches:
+#   production   the API's own inference log (src/serving/inference_log.py), last
+#                7 days. The weekly schedule uses it once the INFERENCE_LOG_URI
+#                secret is set; with too little traffic the check is skipped
+#                rather than raising a false alarm.
+#   none         the held-out test split (expected: healthy). The schedule's
+#                fallback while no inference log is configured.
+#   heatwave | aging | new_market   simulated drift, to watch the loop fire.
+#
+# Secrets for the production batch: INFERENCE_LOG_URI (s3://bucket/prefix),
+# AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and, for R2 / B2 / MinIO,
+# AWS_ENDPOINT_URL (plus AWS_DEFAULT_REGION if the store needs one).
 
 on:
   schedule:
@@ -16,7 +26,7 @@ on:
       scenario:
         description: Batch to check
         type: choice
-        options: [none, heatwave, aging, new_market]
+        options: [production, none, heatwave, aging, new_market]
         default: heatwave
       retrain:
         description: Dispatch retraining when drift is detected
@@ -44,20 +54,49 @@ jobs:
         run: pip install -r requirements/train.txt
 
       - name: Build reference + batch
+        id: batch
+        env:
+          INPUT_SCENARIO: ${{ inputs.scenario }}
+          INFERENCE_LOG_URI: ${{ secrets.INFERENCE_LOG_URI }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.AWS_ENDPOINT_URL }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION || 'auto' }}
         run: |
           python -m src.data.fetch_data
           python -m src.data.preprocess
-          SCENARIO="${{ inputs.scenario || 'none' }}"
-          if [ "$SCENARIO" = "none" ]; then
-            echo "BATCH=data/processed/test.parquet" >> "$GITHUB_ENV"
-          else
-            python -m src.monitoring.simulate_drift --scenario "$SCENARIO"
-            echo "BATCH=data/drift/$SCENARIO.parquet" >> "$GITHUB_ENV"
+
+          SCENARIO="$INPUT_SCENARIO"
+          if [ -z "$SCENARIO" ]; then  # scheduled run
+            if [ -n "$INFERENCE_LOG_URI" ]; then SCENARIO=production; else SCENARIO=none; fi
           fi
           echo "SCENARIO=$SCENARIO" >> "$GITHUB_ENV"
 
+          case "$SCENARIO" in
+            none)
+              echo "BATCH=data/processed/test.parquet" >> "$GITHUB_ENV" ;;
+            production)
+              if [ -z "$INFERENCE_LOG_URI" ]; then
+                echo "::error::scenario 'production' needs the INFERENCE_LOG_URI secret (see the header of this workflow)"
+                exit 1
+              fi
+              rc=0
+              python -m src.monitoring.inference_logs --out data/drift/production.parquet || rc=$?
+              if [ "$rc" = 3 ]; then
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+                echo "### Drift check skipped: not enough production traffic in the window (see log)" >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+              [ "$rc" = 0 ] || exit "$rc"
+              echo "BATCH=data/drift/production.parquet" >> "$GITHUB_ENV" ;;
+            *)
+              python -m src.monitoring.simulate_drift --scenario "$SCENARIO"
+              echo "BATCH=data/drift/$SCENARIO.parquet" >> "$GITHUB_ENV" ;;
+          esac
+
       - name: Run PSI drift check
         id: drift
+        if: steps.batch.outputs.skip != 'true'
         run: |
           python -m src.monitoring.drift_check --current "$BATCH"
           python - <<'EOF' >> "$GITHUB_OUTPUT"
@@ -79,6 +118,7 @@ jobs:
           EOF
 
       - uses: actions/upload-artifact@v5
+        if: steps.batch.outputs.skip != 'true'
         with:
           name: drift-report
           path: artifacts/drift_report.json

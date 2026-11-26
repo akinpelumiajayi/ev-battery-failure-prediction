@@ -1,0 +1,6 @@
+# Production canary (opt-in). Render with: kubectl kustomize argocd/canary/base
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mlops-prod
+resources:
+  - canary.yaml

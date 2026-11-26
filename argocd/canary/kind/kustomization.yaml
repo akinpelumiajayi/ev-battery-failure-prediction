@@ -1,0 +1,82 @@
+# The production canary, adapted for a throwaway kind cluster (CI and
+# `make canary-demo`). Same Gateway, HTTPRoute, Services, PodMonitor, Rollout
+# and AnalysisTemplate (same queries and thresholds); only the timings change:
+#   - its own namespace and the locally built image
+#   - steps: 10 % -> indefinite pause (to inspect the 90/10 split) -> 50 %
+#     -> analysis -> 100 %
+#   - analysis: 6 samples 15 s apart after a 45 s delay (Prometheus must discover
+#     and scrape the new canary pods first) instead of 5 samples over 5-10 min
+#   - a 180 s progress deadline (longer than the ~2 min analysis) so a broken
+#     image still aborts quickly
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: rollouts-ci
+resources:
+  - ../base
+images:
+  - name: ghcr.io/akinpelumiajayi/ev-battery-failure-prediction
+    newName: ev-battery-api
+    newTag: ci
+patches:
+  - target:
+      kind: Rollout
+      name: ev-battery-api
+    patch: |-
+      - op: replace
+        path: /spec/progressDeadlineSeconds
+        value: 180
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
+      - op: replace
+        path: /spec/strategy/canary/trafficRouting/plugins/argoproj-labs~1gatewayAPI/namespace
+        value: rollouts-ci
+      - op: replace
+        path: /spec/strategy/canary/steps
+        value:
+          - setWeight: 10
+          - pause: {}
+          - setWeight: 50
+          - analysis:
+              templates:
+                - templateName: model-serving-health
+              args:
+                - name: canary-hash
+                  valueFrom:
+                    podTemplateHashValue: Latest
+                - name: namespace
+                  value: rollouts-ci
+          - setWeight: 100
+  # Metrics: 0 = p95-latency, 1 = error-rate, 2 = high-risk-share.
+  # 45 s initial delay so Prometheus has discovered and scraped the new canary pods.
+  - target:
+      kind: AnalysisTemplate
+      name: model-serving-health
+    patch: |-
+      - op: add
+        path: /spec/metrics/0/initialDelay
+        value: 45s
+      - op: replace
+        path: /spec/metrics/0/interval
+        value: 15s
+      - op: replace
+        path: /spec/metrics/0/count
+        value: 6
+      - op: add
+        path: /spec/metrics/1/initialDelay
+        value: 45s
+      - op: replace
+        path: /spec/metrics/1/interval
+        value: 15s
+      - op: replace
+        path: /spec/metrics/1/count
+        value: 6
+      - op: add
+        path: /spec/metrics/2/initialDelay
+        value: 45s
+      - op: replace
+        path: /spec/metrics/2/interval
+        value: 15s
+      - op: replace
+        path: /spec/metrics/2/count
+        value: 6
