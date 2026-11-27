@@ -117,7 +117,7 @@ jobs:
               print(f"| {f} | {s:.3f} |")
           EOF
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         if: steps.batch.outputs.skip != 'true'
         with:
           name: drift-report

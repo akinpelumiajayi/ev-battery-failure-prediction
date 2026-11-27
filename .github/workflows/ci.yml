@@ -139,7 +139,7 @@ jobs:
             }
 
       - name: Upload model bundle
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: model-bundle
           retention-days: 30
