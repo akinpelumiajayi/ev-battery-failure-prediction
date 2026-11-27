@@ -68,7 +68,7 @@ PRESETS = {
 }
 
 
-WAKE_DEADLINE = 90  # seconds; a free-tier API can take ~30-60 s to wake from sleep
+WAKE_DEADLINE = 180  # seconds; a free-tier API can take 1-3 min to wake (image pull + startup)
 
 
 @st.cache_data(ttl=60)
@@ -99,9 +99,7 @@ def model_info() -> dict | None:
         return None
 
 
-with st.spinner(
-    "Waking up the prediction API (free hosting sleeps when idle; this can take up to a minute)..."
-):
+with st.spinner("Waking up the prediction API (free hosting sleeps when idle; this can take 1-3 minutes)..."):
     info = model_info()
 
 st.title("🔋 EV Battery Failure Risk")

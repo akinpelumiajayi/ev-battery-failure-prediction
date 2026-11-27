@@ -12,7 +12,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **[▶ Live demo](https://ev-battery-demo.onrender.com/)** · **[API docs (Swagger)](https://ev-battery-api-8zjw.onrender.com/docs)**<br>
-<sub>Free-tier hosting: the first request after ~15 min idle takes 30–60 s while the service wakes up.</sub>
+<sub>Free-tier hosting: the first visit after ~15 min idle can take 1–3 minutes while the services wake up.</sub>
 
 `DVC` · `MLflow` · `Optuna` · `SHAP` · `FastAPI` · `Docker` · `Kubernetes` · `Helm` · `ArgoCD` · `Argo Rollouts` · `Gateway API` · `GitHub Actions` · `Prometheus` · `Grafana` · `Cloudflare R2` · `Streamlit`
 
@@ -81,7 +81,7 @@ Everything below is live or recorded by CI, so you can check it yourself.
 | **Prometheus metrics** | [`/metrics`](https://ev-battery-api-8zjw.onrender.com/metrics) | Raw latency, prediction-count, risk-band and error counters that Grafana and the canary analysis use |
 | **Container image** | [GHCR package](https://github.com/akinpelumiajayi/ev-battery-failure-prediction/pkgs/container/ev-battery-failure-prediction) | `docker pull ghcr.io/akinpelumiajayi/ev-battery-failure-prediction:latest` |
 
-<sub>Free-tier hosting: the first request after ~15 min idle takes 30–60 s while the service wakes up.</sub>
+<sub>Free-tier hosting: the first visit after ~15 min idle can take 1–3 minutes while the services wake up.</sub>
 
 ### The monitoring loop, end to end, on live traffic
 The live API logs every prediction as Parquet to object storage (Cloudflare R2). The drift check reads
