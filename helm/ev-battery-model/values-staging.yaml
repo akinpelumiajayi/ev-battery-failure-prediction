@@ -3,7 +3,7 @@
 replicaCount: 1
 
 image:
-  tag: "52ced12fd6da41a36c457e5b7cd16a28e622a10e"
+  tag: "8024afe263f9830d4f039b51c7eefc237b0796d4"
 
 autoscaling:
   minReplicas: 1
