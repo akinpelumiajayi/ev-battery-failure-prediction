@@ -11,6 +11,7 @@ Talks to the FastAPI service over HTTP — the UI holds no model logic.
 from __future__ import annotations
 
 import os
+import time
 
 import pandas as pd
 import requests
@@ -67,13 +68,28 @@ PRESETS = {
 }
 
 
+WAKE_DEADLINE = 90  # seconds; a free-tier API can take ~30-60 s to wake from sleep
+
+
 @st.cache_data(ttl=60)
 def _fetch_model_info() -> dict:
-    # Raises on failure; st.cache_data does not cache exceptions, so a failed
-    # call during a cold start is retried on the next page load.
-    resp = requests.get(f"{API_URL}/model", timeout=TIMEOUT)
-    resp.raise_for_status()
-    return resp.json()
+    # While a sleeping host spins up, its proxy can answer 502/503 or drop the
+    # connection, so keep retrying until the deadline instead of failing on the
+    # first attempt. Raises on final failure; st.cache_data does not cache
+    # exceptions, so the next page load (or Retry) tries again.
+    deadline = time.monotonic() + WAKE_DEADLINE
+    while True:
+        try:
+            resp = requests.get(f"{API_URL}/model", timeout=TIMEOUT)
+            if resp.status_code < 500:
+                resp.raise_for_status()
+                return resp.json()
+            error: requests.RequestException = requests.HTTPError(f"HTTP {resp.status_code}")
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            error = exc
+        if time.monotonic() >= deadline:
+            raise error
+        time.sleep(3)
 
 
 def model_info() -> dict | None:
@@ -83,7 +99,9 @@ def model_info() -> dict | None:
         return None
 
 
-with st.spinner("Connecting to the prediction API (it may take up to a minute to wake up)..."):
+with st.spinner(
+    "Waking up the prediction API (free hosting sleeps when idle; this can take up to a minute)..."
+):
     info = model_info()
 
 st.title("🔋 EV Battery Failure Risk")
@@ -94,9 +112,13 @@ st.caption(
 )
 
 if info is None:
-    st.error(
-        f"Cannot reach the prediction API at `{API_URL}`. Start it with `make serve` or `make docker-up`."
+    st.warning(
+        "The prediction API is still waking up. It runs on free hosting that sleeps after ~15 minutes "
+        "idle. Give it a few seconds and press **Retry**."
     )
+    if st.button("Retry", type="primary"):
+        st.rerun()
+    st.caption(f"API: `{API_URL}` · running locally? Start it with `make serve` or `make docker-up`.")
     st.stop()
 
 with st.sidebar:
