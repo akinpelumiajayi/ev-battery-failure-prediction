@@ -35,6 +35,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    restart: unless-stopped
 
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.22.0
@@ -45,6 +46,7 @@ services:
     volumes:
       - ./mlflow:/mlflow
     ports: ["5000:5000"]
+    restart: unless-stopped
 
   prometheus:
     image: prom/prometheus:v3.1.0
@@ -53,6 +55,7 @@ services:
       - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
     ports: ["9090:9090"]
     depends_on: [api]
+    restart: unless-stopped
 
   grafana:
     image: grafana/grafana:11.4.0
@@ -66,6 +69,7 @@ services:
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports: ["3000:3000"]
     depends_on: [prometheus]
+    restart: unless-stopped
 
   # Synthetic traffic so the dashboards have something to show:
   #   docker compose --profile loadgen up loadgen

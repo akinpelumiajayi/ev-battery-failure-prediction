@@ -14,7 +14,7 @@
 **[▶ Live demo](https://ev-battery-demo.onrender.com/)** · **[API docs (Swagger)](https://ev-battery-api-8zjw.onrender.com/docs)**<br>
 <sub>Free-tier hosting: the first request after ~15 min idle takes 30–60 s while the service wakes up.</sub>
 
-`DVC` · `MLflow` · `Optuna` · `SHAP` · `FastAPI` · `Docker` · `Kubernetes` · `Helm` · `ArgoCD` · `GitHub Actions` · `Prometheus` · `Grafana` · `Streamlit`
+`DVC` · `MLflow` · `Optuna` · `SHAP` · `FastAPI` · `Docker` · `Kubernetes` · `Helm` · `ArgoCD` · `Argo Rollouts` · `Gateway API` · `GitHub Actions` · `Prometheus` · `Grafana` · `Cloudflare R2` · `Streamlit`
 
 </div>
 
@@ -112,27 +112,25 @@ writes a summary with the evidence. Open any green run and scroll to the summary
 - **GitOps, prod:** the real prod Application stays *OutOfSync* with nothing deployed until a manual sync, then runs 3 replicas with HPA and PDB; Prometheus scrapes every pod through the ServiceMonitor, and the HTTPRoute serves the prod hostname through the shared Gateway
 - **Canary:** pauses at a 90/10 HTTPRoute split; the Prometheus analysis passes a good model (high-risk share ≈ 10 %), **aborts a model that is fast but wrong** (every pack "high") and a broken image, with traffic snapping back to stable each time
 
-<!--
 ### Screenshots
-Uncomment each row once the image is in docs/images/ (see "Run it yourself" for how to capture them).
+Captured on a local kind cluster and the Docker Compose stack; see "Run it yourself" below to reproduce them.
 
 <table>
 <tr>
-<td><img src="docs/images/grafana-dashboard.png" alt="Grafana: latency, throughput, risk-band mix"><br><sub>Grafana: latency, throughput, risk-band mix under load</sub></td>
-<td><img src="docs/images/prometheus-alerts.png" alt="Prometheus alert rules"><br><sub>Prometheus: the 5 alert rules</sub></td>
+<td width="50%"><img src="docs/images/grafana-dashboard.png" alt="Grafana dashboard: requests per second, p95 latency, high-risk share, predictions by risk band, latency percentiles, probability distribution and input quality"><br><sub>Grafana under <code>make load-test</code>: ~10 req/s, p95 24 ms, risk-band mix and the predicted-probability heatmap</sub></td>
+<td width="50%"><img src="docs/images/prometheus-alerts.png" alt="Prometheus alerts page with the five ev-battery-model alert rules"><br><sub>Prometheus: the 5 alert rules; <code>InputMissingnessSpike</code> goes pending because the load test sends partial payloads</sub></td>
 </tr>
 <tr>
-<td><img src="docs/images/argocd-staging.png" alt="ArgoCD staging application Synced and Healthy"><br><sub>ArgoCD: staging Synced / Healthy</sub></td>
-<td><img src="docs/images/canary-paused.png" alt="Argo Rollouts dashboard with canary paused at 10 percent"><br><sub>Argo Rollouts: canary paused at 10 %</sub></td>
+<td width="50%"><img src="docs/images/argocd-staging.png" alt="ArgoCD application ev-battery-model-staging Synced and Healthy with its resource tree"><br><sub>ArgoCD: staging auto-synced from <code>main</code>, Synced / Healthy (Service, Deployment, HPA)</sub></td>
+<td width="50%"><img src="docs/images/canary-paused.png" alt="Argo Rollouts dashboard with the canary paused at step 1 of 5, weight 10 percent"><br><sub>Argo Rollouts: canary paused at 10 %, stable revision 1 still serving 90 %</sub></td>
 </tr>
 </table>
--->
 
 ### Run it yourself
 | To see | Run | Then open |
 |---|---|---|
 | Grafana dashboard + alerts | `make docker-up`, then `make load-test` | http://localhost:3000, http://localhost:9090/alerts |
-| ArgoCD syncing from Git | `make kind-up`, [install ArgoCD](https://argo-cd.readthedocs.io/en/stable/getting_started/), `make argocd-bootstrap` | `kubectl port-forward svc/argocd-server -n argocd 8080:443` → https://localhost:8080 |
+| ArgoCD syncing from Git | `make kind-up kind-addons` (metrics-server keeps the HPA healthy), [install ArgoCD](https://argo-cd.readthedocs.io/en/stable/getting_started/), `make argocd-bootstrap` | `kubectl port-forward svc/argocd-server -n argocd 8080:443` → https://localhost:8080 |
 | A canary paused at 10 % | `make kind-up docker-build canary-demo` | http://localhost:3100 (promote or abort from the dashboard) |
 
 ## Architecture
@@ -160,12 +158,15 @@ flowchart LR
   subgraph K8s["Kubernetes — GitOps"]
     CD --> AR[ArgoCD]
     AR -->|auto-sync| ST[Staging]
-    AR -->|PR + manual sync| PR[Production<br/>HPA · PDB]
+    AR -->|PR + manual sync| PR[Production<br/>HPA · PDB · HTTPRoute]
+    PR -. opt-in .-> CN[Argo Rollouts canary<br/>Prometheus analysis]
   end
 
   subgraph Obs["Observe & close the loop"]
     PR --> P[Prometheus] --> GF[Grafana + alerts]
-    D[Scheduled PSI<br/>drift check] -->|drift| IS[GitHub issue]
+    PR --> LOG[(Inference log<br/>Parquet in R2)]
+    LOG --> D[Weekly PSI<br/>drift check]
+    D -->|drift| IS[GitHub issue]
     D -->|drift| T
   end
 ```
@@ -328,8 +329,9 @@ make drift-demo        # simulate a heatwave: hotter cells, more fast charging, 
 # DRIFT DETECTED: 10/67 features (15%) over PSI 0.20 — top: cell_temperature_max, ...
 ```
 
-The same three scenarios (`heatwave`, `aging`, `new_market`) can be run from the **Actions → Drift check**
-tab to watch the issue → retrain → gate → deploy loop end to end. CI also asserts on every run that a
+The same three scenarios (`heatwave`, `aging`, `new_market`), plus `production` (the logged live
+traffic), can be run from the **Actions → Drift check** tab to watch the issue → retrain → gate → deploy
+loop end to end. CI also asserts on every run that a
 simulated drifted batch trips the alarm, so the monitor itself is tested.
 
 ### Monitoring real traffic: the inference log
@@ -398,20 +400,16 @@ flush, then `make drift-production`.
 * **Local-first, cloud-portable.** The MLflow backend (SQLite) and data mirror are free to run. Moving to
   a team setup is configuration only: a hosted MLflow `tracking_uri` and an S3/GCS DVC remote.
 
-## Limitations and next steps
+## Known limitations and roadmap
 
-* **The data is simulated.** The Kaggle author says so, and the data shows it too: some model/body-type
-  pairs are implausible, such as a "Mustang Mach-E" labelled *Truck*. The engineering transfers to real
-  fleet data; the absolute metrics would not. See the [dataset card](docs/DATASET_CARD.md).
-* **Probabilities are not calibrated.** `class_weight="balanced"` inflates them (Brier 0.043); decisions
-  use the tuned threshold, so this affects the displayed probability, not the decision quality. Isotonic
-  calibration is the next step if probabilities are consumed directly.
-* **Single snapshot, no time dimension.** Real failure prediction would use sequences of telemetry and a
-  temporal split (train on the past, test on the future). Survival analysis (time-to-failure) is a natural
-  extension.
-* **Delayed labels are not joined yet.** The inference log monitors inputs and outputs. Joining it with
-  the failures observed weeks later (by a fleet-side vehicle key) would measure real-world recall and
-  precision, not just drift. The live Render demo does not have a bucket configured.
+What the numbers above can and can't tell you, and what I'd build next:
+
+| Known limitation | Why it matters | Roadmap |
+|---|---|---|
+| **The data is simulated.** The Kaggle author says so, and the data shows it: some model/body-type pairs are implausible, such as a "Mustang Mach-E" labelled *Truck* ([dataset card](docs/DATASET_CARD.md)) | The engineering transfers to real fleet data; the absolute metrics would not | Swap in real fleet telemetry: the data contract, leakage audit and gates already guard that change |
+| **Probabilities are not calibrated.** `class_weight="balanced"` inflates them (Brier 0.043) | Decisions use the tuned threshold, so decision quality is unaffected; only the displayed probability is | Isotonic calibration, once a consumer uses the probability directly |
+| **Single snapshot, no time dimension** | Real failure prediction uses sequences of telemetry and a temporal split (train on the past, test on the future) | Temporal split, then survival analysis (time-to-failure) |
+| **Delayed labels are not joined yet.** The inference log already monitors inputs and outputs | Drift says the inputs changed, not that the model got worse | Join the log with failures observed weeks later (by a fleet-side vehicle key) to measure real-world recall and precision |
 
 See the [model card](docs/MODEL_CARD.md) for intended use, evaluation details and ethical considerations.
 
