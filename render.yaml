@@ -16,6 +16,22 @@ services:
     envVars:
       - key: PORT
         value: "8000"
+      # Inference log -> Cloudflare R2 (S3-compatible), read back by the drift
+      # check. `sync: false` means Render asks for the value in the dashboard
+      # and it never lives in Git. Use the same values as the GitHub Actions
+      # secrets of the same names. Leave INFERENCE_LOG_URI empty to turn logging off.
+      - key: INFERENCE_LOG_URI          # e.g. s3://ev-battery-inference/render
+        sync: false
+      - key: AWS_ACCESS_KEY_ID          # R2 API token, Object Read & Write on that bucket
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_ENDPOINT_URL           # https://<account-id>.r2.cloudflarestorage.com
+        sync: false
+      - key: AWS_DEFAULT_REGION
+        value: auto
+      - key: INFERENCE_LOG_FLUSH_SECONDS  # short: the free tier sleeps after ~15 idle min
+        value: "30"
 
   - type: web
     name: ev-battery-demo
