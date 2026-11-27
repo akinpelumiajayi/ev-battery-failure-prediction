@@ -81,7 +81,14 @@ def load_inference_logs(
         frames = [pd.read_parquet(f) for day in days for f in _local_files(root, day, model_version)]
     if not frames:
         return pd.DataFrame()
-    logs = pd.concat(frames, ignore_index=True)
+    # A small file can have an optional input that is null in every row; drop
+    # such columns per file before concatenating (pandas deprecates letting
+    # all-NA columns pick the dtype) and restore the full column set after.
+    columns = list(dict.fromkeys(c for f in frames for c in f.columns))
+    non_empty = [f.dropna(axis=1, how="all") for f in frames if not f.empty]
+    if not non_empty:
+        return pd.DataFrame(columns=columns)
+    logs = pd.concat(non_empty, ignore_index=True).reindex(columns=columns)
     logger.info(
         "Read %d logged predictions from %d files (%s, last %d days)",
         len(logs),
