@@ -83,16 +83,25 @@ Everything below is live or recorded by CI, so you can check it yourself.
 
 <sub>Free-tier hosting: the first request after ~15 min idle takes 30–60 s while the service wakes up.</sub>
 
-### The monitoring loop, end to end
-A simulated heatwave batch was sent through the drift check. It caught the drift, opened an issue and
-retrained the model through the full quality and champion/challenger gates, all without a person involved:
+### The monitoring loop, end to end, on live traffic
+The live API logs every prediction as Parquet to object storage (Cloudflare R2). The drift check reads
+the last 7 days of those logs back and compares them with the training data. On a run against real
+traffic it caught the drift, updated the issue and retrained the model through the full quality and
+champion/challenger gates, all without a person involved:
 
-1. [**Drift check run**](https://github.com/akinpelumiajayi/ev-battery-failure-prediction/actions/runs/45084856760): PSI flagged 10 features
-2. [**Issue #2**](https://github.com/akinpelumiajayi/ev-battery-failure-prediction/issues/2): opened automatically with the drifted features and their PSI scores
-3. [**Retraining run**](https://github.com/akinpelumiajayi/ev-battery-failure-prediction/actions/runs/45084950092): CI dispatched by the drift check, `dvc repro`, gates passed
+1. **Traffic:** 853 requests to the live API from `scripts/load_test.py` (0 errors, p95 426 ms), plus demo clicks
+2. [**Drift check run**](https://github.com/akinpelumiajayi/ev-battery-failure-prediction/actions/runs/45913328491): read **933 logged predictions from 34 files** in R2; PSI flagged **23 of 67 features** (top: `terrain_type`, `fleet_or_private`, `battery_manufacturer`)
+3. [**Issue #2**](https://github.com/akinpelumiajayi/ev-battery-failure-prediction/issues/2): opened or updated automatically with the drifted features and their PSI scores
+4. [**Retraining run**](https://github.com/akinpelumiajayi/ev-battery-failure-prediction/actions/runs/45913422733): CI dispatched by the drift check, `dvc repro`, gates passed
 
-The same check also runs [every Monday](.github/workflows/drift-check.yml) on the held-out batch, where it
-is expected to find no drift.
+The drift is genuine but expected: the load test draws its inputs at random, so they don't follow the
+training distribution, and the check is right to flag them. The same loop was first shown on a
+[simulated heatwave batch](https://github.com/akinpelumiajayi/ev-battery-failure-prediction/actions/runs/45084856760)
+(10 features flagged, [retrained](https://github.com/akinpelumiajayi/ev-battery-failure-prediction/actions/runs/45084950092)).
+
+The check runs [every Monday](.github/workflows/drift-check.yml) on the logged production traffic. With
+no log storage configured it falls back to the held-out test batch, where it should find no drift; with
+fewer than 500 logged rows it skips instead of judging a tiny sample.
 
 ### Proved on every CI run
 Each [CI run](https://github.com/akinpelumiajayi/ev-battery-failure-prediction/actions/workflows/ci.yml)
