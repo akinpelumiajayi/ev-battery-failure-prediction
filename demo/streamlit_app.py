@@ -68,39 +68,51 @@ PRESETS = {
 }
 
 
-WAKE_DEADLINE = 180  # seconds; a free-tier API can take 1-3 min to wake (image pull + startup)
+WAKE_DEADLINE = int(
+    os.environ.get("API_WAKE_DEADLINE", "180")
+)  # seconds; a free-tier API can take 1-3 min to wake (image pull + startup)
+
+
+class APIUnavailable(Exception):
+    """The API did not return valid model info before the wake deadline."""
 
 
 @st.cache_data(ttl=60)
 def _fetch_model_info() -> dict:
-    # While a sleeping host spins up, its proxy can answer 502/503 or drop the
-    # connection, so keep retrying until the deadline instead of failing on the
-    # first attempt. Raises on final failure; st.cache_data does not cache
-    # exceptions, so the next page load (or Retry) tries again.
+    # While a sleeping host spins up, its proxy can drop the connection, answer
+    # 5xx/4xx, or serve a non-JSON placeholder page. Treat anything other than
+    # valid model JSON as "not ready yet" and retry until the deadline. Raises on
+    # final failure; st.cache_data does not cache exceptions, so the next page
+    # load (or Retry) tries again.
     deadline = time.monotonic() + WAKE_DEADLINE
+    attempts = 0
     while True:
+        attempts += 1
         try:
             resp = requests.get(f"{API_URL}/model", timeout=TIMEOUT)
-            if resp.status_code < 500:
-                resp.raise_for_status()
-                return resp.json()
-            error: requests.RequestException = requests.HTTPError(f"HTTP {resp.status_code}")
-        except (requests.ConnectionError, requests.Timeout) as exc:
-            error = exc
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, dict) and "model_name" in data:
+                    return data
+                last = f"HTTP 200 without model info ({resp.headers.get('content-type', '?')})"
+            else:
+                last = f"HTTP {resp.status_code}"
+        except (requests.RequestException, ValueError) as exc:
+            last = f"{type(exc).__name__}: {exc}"
         if time.monotonic() >= deadline:
-            raise error
+            raise APIUnavailable(f"{last} (after {attempts} attempts)")
         time.sleep(3)
 
 
-def model_info() -> dict | None:
+def model_info() -> tuple[dict | None, str]:
     try:
-        return _fetch_model_info()
-    except requests.RequestException:
-        return None
+        return _fetch_model_info(), ""
+    except APIUnavailable as exc:
+        return None, str(exc)
 
 
 with st.spinner("Waking up the prediction API (free hosting sleeps when idle; this can take 1-3 minutes)..."):
-    info = model_info()
+    info, api_error = model_info()
 
 st.title("🔋 EV Battery Failure Risk")
 st.caption(
@@ -116,7 +128,8 @@ if info is None:
     )
     if st.button("Retry", type="primary"):
         st.rerun()
-    st.caption(f"API: `{API_URL}` · running locally? Start it with `make serve` or `make docker-up`.")
+    st.caption(f"API: `{API_URL}` · last response: {api_error}")
+    st.caption("Running locally? Start the API with `make serve` or `make docker-up`.")
     st.stop()
 
 with st.sidebar:
